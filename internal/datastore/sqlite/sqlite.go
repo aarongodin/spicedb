@@ -3,8 +3,12 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
+
+	sq "github.com/Masterminds/squirrel"
 
 	"github.com/authzed/spicedb/internal/datastore/common"
+	"github.com/authzed/spicedb/internal/datastore/revisions"
 	"github.com/authzed/spicedb/pkg/datastore"
 	"github.com/authzed/spicedb/pkg/datastore/options"
 
@@ -19,36 +23,28 @@ const (
 	Engine = "sqlite"
 	// tableNamespace   = "namespace_config"
 	// tableTransaction = "relation_tuple_transaction"
-	// tableTuple       = "relation_tuple"
+	tableTuple = "relation_tuple"
 	// tableCaveat      = "caveat"
 
-	// colXID               = "xid"
 	// colTimestamp         = "timestamp"
-	// colNamespace         = "namespace"
-	// colConfig            = "serialized_config"
-	// colCreatedXid        = "created_xid"
-	// colDeletedXid        = "deleted_xid"
-	// colSnapshot          = "snapshot"
-	// colObjectID          = "object_id"
-	// colRelation          = "relation"
-	// colUsersetNamespace  = "userset_namespace"
-	// colUsersetObjectID   = "userset_object_id"
-	// colUsersetRelation   = "userset_relation"
-	// colCaveatName        = "name"
+	colNamespace        = "namespace"
+	colCreatedTxn       = "created_transaction"
+	colDeletedTxn       = "deleted_transaction"
+	colObjectID         = "object_id"
+	colRelation         = "relation"
+	colUsersetNamespace = "userset_namespace"
+	colUsersetObjectID  = "userset_object_id"
+	colUsersetRelation  = "userset_relation"
+	colCaveatName       = "name"
 	// colCaveatDefinition  = "definition"
-	// colCaveatContextName = "caveat_name"
-	// colCaveatContext     = "caveat_context"
+	colCaveatContextName = "caveat_name"
+	colCaveatContext     = "caveat_context"
 
 	errUnableToInstantiate = "unable to instantiate datastore"
 
-	// // The parameters to this format string are:
-	// // 1: the created_xid or deleted_xid column name
-	// //
-	// // The placeholders are the snapshot and the expected boolean value respectively.
-	// snapshotAlive = "pg_visible_in_snapshot(%[1]s, ?) = ?"
-
-	// // This is the largest positive integer possible in postgresql
-	// liveDeletedTxnID = uint64(9223372036854775807)
+	// This is the largest positive integer possible in postgresql
+	// TODO(aarongodin): need to determine what is the largest possible int for sqlite
+	liveDeletedTxnID = uint64(9223372036854775807)
 
 	// tracingDriverName = "postgres-tracing"
 
@@ -56,6 +52,12 @@ const (
 
 	// livingTupleConstraint = "uq_relation_tuple_living_xid"
 )
+
+var (
+	builder = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+)
+
+type CloseHandler func(*sql.DB) error
 
 // NewSqliteDatastore creates a new datastore from the common datastore options provided through the server/CLI.
 func NewSqliteDatastore(
@@ -75,8 +77,9 @@ func NewSqliteDatastore(
 func NewSqliteDatastoreWithInstance(
 	ctx context.Context,
 	instance *sql.DB,
+	closeHandler CloseHandler,
 ) (datastore.Datastore, error) {
-	return newSqliteDatastoreWithInstance(ctx, instance)
+	return newSqliteDatastoreWithInstance(ctx, instance, closeHandler)
 }
 
 func newSqliteDatastore(
@@ -99,7 +102,8 @@ func newSqliteDatastore(
 	}
 
 	datastore := &sqliteDatastore{
-		store: db,
+		store:      db,
+		ownedStore: true,
 	}
 
 	return datastore, nil
@@ -108,9 +112,12 @@ func newSqliteDatastore(
 func newSqliteDatastoreWithInstance(
 	ctx context.Context,
 	instance *sql.DB,
+	closeHandler CloseHandler,
 ) (datastore.Datastore, error) {
 	datastore := &sqliteDatastore{
-		store: instance,
+		store:        instance,
+		ownedStore:   false,
+		closeHandler: closeHandler,
 	}
 
 	return datastore, nil
@@ -120,23 +127,32 @@ type sqliteDatastore struct {
 	store *sql.DB
 	// an owned store is one that has been instantiated by this package
 	ownedStore bool
+	// user-supplied callback for closing the datastore
+	closeHandler CloseHandler
 }
 
-func (ds *sqliteDatastore) SnapshotReader(revRaw datastore.Revision) datastore.Reader {
-	// TODO(aarongodin): determine if we need this for sqlite - are there aspects of a sqlite revision that will be different?
-	// this is a cast to a local type, I think you can presume that there is compatible struct fields but other methods on this postgresRevision type
-	// that give you access to postgres-specific things
-	// rev := revRaw.(postgresRevision)
+func (ds *sqliteDatastore) SnapshotReader(rev datastore.Revision) datastore.Reader {
+	createTxFunc := func(ctx context.Context) (*sql.Tx, txCleanupFunc, error) {
+		// TODO(aarongodin): determine if we would like to pass in any options to BeginTx(..)
+		tx, err := ds.store.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return tx, tx.Rollback, nil
+	}
+
+	executor := common.QueryExecutor{
+		Executor: newSqliteExecutor(ds.store),
+	}
 
 	return &sqliteReader{
-		// queryFuncs,
-		// executor,
-		// buildLivingObjectFilterForRevision(rev),
+		txSource: createTxFunc,
+		executor: executor,
+		filterer: buildLivingObjectFilterForRevision(rev),
 	}
 }
 
-// ReadWriteTx starts a read/write transaction, which will be committed if no error is
-// returned and rolled back if an error is returned.
 func (ds *sqliteDatastore) ReadWriteTx(
 	ctx context.Context,
 	fn datastore.TxUserFunc,
@@ -145,35 +161,55 @@ func (ds *sqliteDatastore) ReadWriteTx(
 	return nil, nil
 }
 
-// These ones should go in their own files eventually:
-
 func (ds *sqliteDatastore) Watch(ctx context.Context, afterRevision datastore.Revision, options datastore.WatchOptions) (<-chan *datastore.RevisionChanges, <-chan error) {
+	// Return nil channels for now since the watch feature is explicitly disabled.
+	// Implement this once the watch feature is determined to be required for sqlite.
 	return nil, nil
 }
 
-// ReadyState returns a state indicating whether the datastore is ready to accept data.
-// Datastores that require database schema creation will return not-ready until the migrations
-// have been run to create the necessary tables.
 func (ds *sqliteDatastore) ReadyState(ctx context.Context) (datastore.ReadyState, error) {
-	return datastore.ReadyState{
-		IsReady: true,
-		Message: "ready",
+	// TODO(aarongodin): check the migrations similarly to how other implementations are and report the readystate
+	return datastore.ReadyState{IsReady: true}, nil
+}
+
+func (ds *sqliteDatastore) Features(ctx context.Context) (*datastore.Features, error) {
+	// Explicitly disable the watch feature for now. More research is required to
+	// determine if this is either useful or feasible in the sqlite datastore.
+	return &datastore.Features{
+		Watch: datastore.Feature{Enabled: false},
 	}, nil
 }
 
-// Features returns an object representing what features this
-// datastore can support.
-func (ds *sqliteDatastore) Features(ctx context.Context) (*datastore.Features, error) {
-	return nil, nil
-}
-
-// Statistics returns relevant values about the data contained in this cluster.
 func (ds *sqliteDatastore) Statistics(ctx context.Context) (datastore.Stats, error) {
 	return datastore.Stats{}, nil
 }
 
 // Close closes the data store.
 func (ds *sqliteDatastore) Close() error {
-	// idea: check ds.ownedStore here and delegate the close to a user defined function
+	if ds.ownedStore {
+		if err := ds.store.Close(); err != nil {
+			return fmt.Errorf("unable to close sqlite store: %w", err)
+		}
+	} else {
+		if ds.closeHandler != nil {
+			if err := ds.closeHandler(ds.store); err != nil {
+				return fmt.Errorf("unable to close sqlite store: %w", err)
+			}
+		}
+	}
+
+	// TODO: reference other implementations to see if there are close steps
+	// required for ongoing transactions or other aspects of using the db
+
 	return nil
+}
+
+func buildLivingObjectFilterForRevision(revision datastore.Revision) queryFilterer {
+	return func(original sq.SelectBuilder) sq.SelectBuilder {
+		return original.Where(sq.LtOrEq{colCreatedTxn: revision.(revisions.TransactionIDRevision).TransactionID()}).
+			Where(sq.Or{
+				sq.Eq{colDeletedTxn: liveDeletedTxnID},
+				sq.Gt{colDeletedTxn: revision},
+			})
+	}
 }

@@ -2,25 +2,62 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 
+	sq "github.com/Masterminds/squirrel"
+
+	"github.com/authzed/spicedb/internal/datastore/common"
 	"github.com/authzed/spicedb/pkg/datastore"
 	"github.com/authzed/spicedb/pkg/datastore/options"
 	core "github.com/authzed/spicedb/pkg/proto/core/v1"
 )
 
-// reader.go must provide an implementation for Datastore.SnapshotReader(..)
+type txCleanupFunc func() error
+
+type txFactory func(context.Context) (*sql.Tx, txCleanupFunc, error)
 
 type sqliteReader struct {
 	// todo: store the revision here, or something?
+
+	txSource txFactory
+	executor common.QueryExecutor
+	filterer queryFilterer
 }
+
+type queryFilterer func(original sq.SelectBuilder) sq.SelectBuilder
+
+var schema = common.NewSchemaInformation(
+	colNamespace,
+	colObjectID,
+	colRelation,
+	colUsersetNamespace,
+	colUsersetObjectID,
+	colUsersetRelation,
+	colCaveatName,
+	common.ExpandedLogicComparison,
+)
+
+var queryTuples = builder.Select(
+	colNamespace,
+	colObjectID,
+	colRelation,
+	colUsersetNamespace,
+	colUsersetObjectID,
+	colUsersetRelation,
+	colCaveatContextName,
+	colCaveatContext,
+).From(tableTuple)
 
 func (r *sqliteReader) QueryRelationships(
 	ctx context.Context,
 	filter datastore.RelationshipsFilter,
 	opts ...options.QueryOptionsOption,
 ) (iter datastore.RelationshipIterator, err error) {
-	// TOOD(aarongodin): implement
-	return nil, nil
+	qBuilder, err := common.NewSchemaQueryFilterer(schema, r.filterer(queryTuples)).FilterWithRelationshipsFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+	return r.executor.ExecuteQuery(ctx, qBuilder, opts...)
 }
 
 func (r *sqliteReader) ReverseQueryRelationships(

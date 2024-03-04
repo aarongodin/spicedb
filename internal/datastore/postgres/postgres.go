@@ -78,6 +78,7 @@ const (
 	livingTupleConstraint = "uq_relation_tuple_living_xid"
 )
 
+// this appears to be registering a new driver from pgx to be used with database/sql pkg
 func init() {
 	dbsql.Register(tracingDriverName, sqlmw.Driver(stdlib.GetDefaultDriver(), new(traceInterceptor)))
 }

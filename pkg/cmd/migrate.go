@@ -93,6 +93,10 @@ func migrateRun(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("unable to create migration driver for %s: %w", datastoreEngine, err)
 		}
 		return runMigration(cmd.Context(), migrationDriver, mysqlmigrations.Manager, args[0], timeout, migrationBatachSize)
+	} else if datastoreEngine == "sqlite" {
+		log.Ctx(cmd.Context()).Info().Msg("migrating sqlite datastore")
+		// TODO(aarongodin): add migration logic for sqlite
+		return nil
 	}
 
 	return fmt.Errorf("cannot migrate datastore engine type: %s", datastoreEngine)

@@ -16,6 +16,7 @@ import (
 	"github.com/authzed/spicedb/internal/datastore/postgres"
 	"github.com/authzed/spicedb/internal/datastore/proxy"
 	"github.com/authzed/spicedb/internal/datastore/spanner"
+	"github.com/authzed/spicedb/internal/datastore/sqlite"
 	log "github.com/authzed/spicedb/internal/logging"
 	"github.com/authzed/spicedb/pkg/datastore"
 	"github.com/authzed/spicedb/pkg/validationfile"
@@ -29,6 +30,7 @@ const (
 	CockroachEngine = "cockroachdb"
 	SpannerEngine   = "spanner"
 	MySQLEngine     = "mysql"
+	SqliteEngine    = "sqlite"
 )
 
 var BuilderForEngine = map[string]engineBuilderFunc{
@@ -37,6 +39,7 @@ var BuilderForEngine = map[string]engineBuilderFunc{
 	MemoryEngine:    newMemoryDatstore,
 	SpannerEngine:   newSpannerDatastore,
 	MySQLEngine:     newMySQLDatastore,
+	SqliteEngine:    newSqliteEngine,
 }
 
 //go:generate go run github.com/ecordell/optgen -output zz_generated.connpool.options.go . ConnPoolConfig
@@ -463,4 +466,9 @@ func newMySQLDatastore(ctx context.Context, opts Config) (datastore.Datastore, e
 func newMemoryDatstore(_ context.Context, opts Config) (datastore.Datastore, error) {
 	log.Warn().Msg("in-memory datastore is not persistent and not feasible to run in a high availability fashion")
 	return memdb.NewMemdbDatastore(opts.WatchBufferLength, opts.RevisionQuantization, opts.GCWindow)
+}
+
+func newSqliteEngine(ctx context.Context, opts Config) (datastore.Datastore, error) {
+	// TODO(aarongodin): emit any warnings here if needed
+	return sqlite.NewSqliteDatastore(ctx, opts.URI)
 }

@@ -17,7 +17,6 @@ func createNamespaceConfig(t *tables) string {
 		serialized_config BLOB NOT NULL,
 		created_transaction INTEGER NOT NULL,
 		deleted_transaction INTEGER NOT NULL DEFAULT 9223372036854775807,
-		PRIMARY KEY (namespace, created_transaction),
 		UNIQUE (namespace, deleted_transaction));`,
 		t.Namespace(),
 	)

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
@@ -139,6 +140,24 @@ type sqliteDatastore struct {
 	closeHandler CloseHandler
 }
 
+func sqlTxClosure(ctx context.Context, db *sql.DB, txOptions *sql.TxOptions, fn func(*sql.Tx) error) error {
+	tx, err := db.BeginTx(ctx, txOptions)
+	if err != nil {
+		return err
+	}
+
+	if err := fn(tx); err != nil {
+		rerr := tx.Rollback()
+		if rerr != nil {
+			return errors.Join(err, rerr)
+		}
+
+		return err
+	}
+
+	return tx.Commit()
+}
+
 func (ds *sqliteDatastore) SnapshotReader(rev datastore.Revision) datastore.Reader {
 	createTxFunc := func(ctx context.Context) (*sql.Tx, txCleanupFunc, error) {
 		// TODO(aarongodin): determine if we would like to pass in any options to BeginTx(..)
@@ -172,7 +191,53 @@ func (ds *sqliteDatastore) ReadWriteTx(
 	fn datastore.TxUserFunc,
 	opts ...options.RWTOptionsOption,
 ) (datastore.Revision, error) {
-	return nil, nil
+	// TODO(aarongodin): implement usage of config
+	// config := options.NewRWTOptionsWithOptions(opts...)
+	// config features to support:
+	//   - retries
+
+	var (
+		err           error
+		transactionID uint64
+	)
+
+	// TODO(aarongodin): determine if sqlite has support for TxOptions we would like to include in particular, `Isolation`
+	err = sqlTxClosure(ctx, ds.store, &sql.TxOptions{}, func(tx *sql.Tx) error {
+		var ierr error
+		transactionID, ierr = createTransaction(ctx, tx)
+		if ierr != nil {
+			return fmt.Errorf("unable to create new txn ID: %w", err)
+		}
+
+		txSource := func(context.Context) (*sql.Tx, txCleanupFunc, error) {
+			return tx, func() error { return nil }, nil
+		}
+
+		executor := common.QueryExecutor{
+			Executor: newSqliteExecutor(ds.store),
+		}
+
+		rwt := &sqliteReadWriteTransaction{
+			sqliteReader: &sqliteReader{
+				txSource: txSource,
+				executor: executor,
+				filterer: func(original sq.SelectBuilder) sq.SelectBuilder {
+					return original.Where(sq.Eq{colDeletedTxn: liveDeletedTxnID})
+				},
+			},
+			tx:            tx,
+			transactionID: transactionID,
+		}
+
+		return fn(ctx, rwt)
+	})
+
+	if err != nil {
+		// TODO(aarongodin): this should return a nicer error that can be understood by spicedb
+		return datastore.NoRevision, err
+	}
+
+	return revisions.NewForTransactionID(transactionID), nil
 }
 
 func (ds *sqliteDatastore) Watch(ctx context.Context, afterRevision datastore.Revision, options datastore.WatchOptions) (<-chan *datastore.RevisionChanges, <-chan error) {

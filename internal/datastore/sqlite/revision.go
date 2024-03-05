@@ -18,6 +18,7 @@ const (
 
 var (
 	getLastRevision = builder.Select("MAX(id)").From(tableTransaction).Limit(1)
+	createRevision  = fmt.Sprintf("INSERT INTO %s DEFAULT VALUES;", tableTransaction)
 )
 
 func (ds *sqliteDatastore) OptimizedRevision(_ context.Context) (datastore.Revision, error) {
@@ -86,4 +87,16 @@ func (ds *sqliteDatastore) CheckRevision(ctx context.Context, rev datastore.Revi
 	// }
 
 	return nil
+}
+
+func createTransaction(ctx context.Context, tx *sql.Tx) (uint64, error) {
+	result, err := tx.ExecContext(ctx, createRevision)
+	if err != nil {
+		return 0, fmt.Errorf("failed creating transaction: %w", err)
+	}
+	lastInsertID, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get last inserted id: %w", err)
+	}
+	return uint64(lastInsertID), nil
 }

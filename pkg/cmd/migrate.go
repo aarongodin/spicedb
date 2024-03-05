@@ -13,6 +13,7 @@ import (
 	mysqlmigrations "github.com/authzed/spicedb/internal/datastore/mysql/migrations"
 	"github.com/authzed/spicedb/internal/datastore/postgres/migrations"
 	spannermigrations "github.com/authzed/spicedb/internal/datastore/spanner/migrations"
+	sqlitemigrations "github.com/authzed/spicedb/internal/datastore/sqlite/migrations"
 	log "github.com/authzed/spicedb/internal/logging"
 	"github.com/authzed/spicedb/pkg/cmd/server"
 	"github.com/authzed/spicedb/pkg/cmd/termination"
@@ -26,6 +27,7 @@ func RegisterMigrateFlags(cmd *cobra.Command) {
 	cmd.Flags().String("datastore-spanner-credentials", "", "path to service account key credentials file with access to the cloud spanner instance (omit to use application default credentials)")
 	cmd.Flags().String("datastore-spanner-emulator-host", "", "URI of spanner emulator instance used for development and testing (e.g. localhost:9010)")
 	cmd.Flags().String("datastore-mysql-table-prefix", "", "prefix to add to the name of all mysql database tables")
+	cmd.Flags().String("datastore-sqlite-table-prefix", "", "prefix to add to the name of all sqlite database tables")
 	cmd.Flags().Uint64("migration-backfill-batch-size", 1000, "number of items to migrate per iteration of a datastore backfill")
 	cmd.Flags().Duration("migration-timeout", 1*time.Hour, "defines a timeout for the execution of the migration, set to 1 hour by default")
 }
@@ -96,7 +98,17 @@ func migrateRun(cmd *cobra.Command, args []string) error {
 	} else if datastoreEngine == "sqlite" {
 		log.Ctx(cmd.Context()).Info().Msg("migrating sqlite datastore")
 		// TODO(aarongodin): add migration logic for sqlite
-		return nil
+		var err error
+		tablePrefix, err := cmd.Flags().GetString("datastore-sqlite-table-prefix")
+		if err != nil {
+			log.Ctx(cmd.Context()).Fatal().Msg(fmt.Sprintf("unable to get table prefix: %s", err))
+		}
+
+		migrationDriver, err := sqlitemigrations.NewSQLiteDriver(dbURL, tablePrefix)
+		if err != nil {
+			return fmt.Errorf("unable to create migration driver for %s: %w", datastoreEngine, err)
+		}
+		return runMigration(cmd.Context(), migrationDriver, sqlitemigrations.Manager, args[0], timeout, migrationBatachSize)
 	}
 
 	return fmt.Errorf("cannot migrate datastore engine type: %s", datastoreEngine)

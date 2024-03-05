@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
+	"go.opentelemetry.io/otel"
 
 	"github.com/authzed/spicedb/internal/datastore/common"
 	"github.com/authzed/spicedb/internal/datastore/revisions"
@@ -20,14 +21,15 @@ func init() {
 }
 
 const (
-	Engine = "sqlite"
-	// tableNamespace   = "namespace_config"
+	Engine         = "sqlite"
+	tableNamespace = "namespace_config"
 	// tableTransaction = "relation_tuple_transaction"
 	tableTuple = "relation_tuple"
 	// tableCaveat      = "caveat"
 
 	// colTimestamp         = "timestamp"
 	colNamespace        = "namespace"
+	colConfig           = "serialized_config"
 	colCreatedTxn       = "created_transaction"
 	colDeletedTxn       = "deleted_transaction"
 	colObjectID         = "object_id"
@@ -54,6 +56,7 @@ const (
 )
 
 var (
+	tracer  = otel.Tracer("spicedb/internal/datastore/sqlite`")
 	builder = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 )
 
@@ -94,7 +97,6 @@ func newSqliteDatastore(
 
 	// TODO(aarongodin): parsing any additional options and setup of sqlite-specific items
 	// goes here
-
 	// TODO(aarongodin) - drive options through this
 	db, err := sql.Open("sqlite3", url)
 	if err != nil {

@@ -11,10 +11,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-var (
-	errUnableToQueryTuples = "unable to query tuples: %w"
-)
-
 type querier interface {
 	QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
 }

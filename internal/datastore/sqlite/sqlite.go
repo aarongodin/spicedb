@@ -21,10 +21,10 @@ func init() {
 }
 
 const (
-	Engine         = "sqlite"
-	tableNamespace = "namespace_config"
-	// tableTransaction = "relation_tuple_transaction"
-	tableTuple = "relation_tuple"
+	Engine           = "sqlite"
+	tableNamespace   = "namespace_config"
+	tableTransaction = "relation_tuple_transaction"
+	tableTuple       = "relation_tuple"
 	// tableCaveat      = "caveat"
 
 	// colTimestamp         = "timestamp"
@@ -56,7 +56,7 @@ const (
 )
 
 var (
-	tracer  = otel.Tracer("spicedb/internal/datastore/sqlite`")
+	tracer  = otel.Tracer("spicedb/internal/datastore/sqlite")
 	builder = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 )
 
@@ -108,11 +108,15 @@ func newSqliteDatastore(
 		ownedStore: true,
 	}
 
+	if err := datastore.seedDatabase(ctx); err != nil {
+		return nil, fmt.Errorf("failed seeding sqlite store: %w", err)
+	}
+
 	return datastore, nil
 }
 
 func newSqliteDatastoreWithInstance(
-	ctx context.Context,
+	_ context.Context,
 	instance *sql.DB,
 	closeHandler CloseHandler,
 ) (datastore.Datastore, error) {
@@ -126,6 +130,8 @@ func newSqliteDatastoreWithInstance(
 }
 
 type sqliteDatastore struct {
+	revisions.CommonDecoder
+
 	store *sql.DB
 	// an owned store is one that has been instantiated by this package
 	ownedStore bool
@@ -151,7 +157,13 @@ func (ds *sqliteDatastore) SnapshotReader(rev datastore.Revision) datastore.Read
 	return &sqliteReader{
 		txSource: createTxFunc,
 		executor: executor,
-		filterer: buildLivingObjectFilterForRevision(rev),
+		filterer: func(original sq.SelectBuilder) sq.SelectBuilder {
+			return original.Where(sq.LtOrEq{colCreatedTxn: rev.(revisions.TransactionIDRevision).TransactionID()}).
+				Where(sq.Or{
+					sq.Eq{colDeletedTxn: liveDeletedTxnID},
+					sq.Gt{colDeletedTxn: rev},
+				})
+		},
 	}
 }
 
@@ -204,14 +216,4 @@ func (ds *sqliteDatastore) Close() error {
 	// required for ongoing transactions or other aspects of using the db
 
 	return nil
-}
-
-func buildLivingObjectFilterForRevision(revision datastore.Revision) queryFilterer {
-	return func(original sq.SelectBuilder) sq.SelectBuilder {
-		return original.Where(sq.LtOrEq{colCreatedTxn: revision.(revisions.TransactionIDRevision).TransactionID()}).
-			Where(sq.Or{
-				sq.Eq{colDeletedTxn: liveDeletedTxnID},
-				sq.Gt{colDeletedTxn: revision},
-			})
-	}
 }

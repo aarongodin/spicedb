@@ -20,8 +20,6 @@ type txCleanupFunc func() error
 type txFactory func(context.Context) (*sql.Tx, txCleanupFunc, error)
 
 type sqliteReader struct {
-	// todo: store the revision here, or something?
-
 	txSource txFactory
 	executor common.QueryExecutor
 	filterer queryFilterer

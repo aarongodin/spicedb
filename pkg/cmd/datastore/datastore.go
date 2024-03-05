@@ -469,6 +469,5 @@ func newMemoryDatstore(_ context.Context, opts Config) (datastore.Datastore, err
 }
 
 func newSqliteEngine(ctx context.Context, opts Config) (datastore.Datastore, error) {
-	// TODO(aarongodin): emit any warnings here if needed
 	return sqlite.NewSqliteDatastore(ctx, opts.URI)
 }

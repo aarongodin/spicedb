@@ -2,7 +2,11 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 
+	"github.com/authzed/spicedb/internal/datastore/revisions"
 	"github.com/authzed/spicedb/pkg/datastore"
 )
 
@@ -12,62 +16,74 @@ const (
 	errRevisionFormat = "invalid revision format: %w"
 )
 
-func (mdb *sqliteDatastore) OptimizedRevision(_ context.Context) (datastore.Revision, error) {
+var (
+	getLastRevision = builder.Select("MAX(id)").From(tableTransaction).Limit(1)
+)
+
+func (ds *sqliteDatastore) OptimizedRevision(_ context.Context) (datastore.Revision, error) {
 	return nil, nil
 }
 
-func (pgd *sqliteDatastore) HeadRevision(ctx context.Context) (datastore.Revision, error) {
-	return nil, nil
+func (ds *sqliteDatastore) HeadRevision(ctx context.Context) (datastore.Revision, error) {
+	revision, err := ds.loadRevision(ctx)
+	if err != nil {
+		return datastore.NoRevision, err
+	}
+	if revision == 0 {
+		return datastore.NoRevision, nil
+	}
+
+	return revisions.NewForTransactionID(revision), nil
 }
 
-func (pgd *sqliteDatastore) CheckRevision(ctx context.Context, revisionRaw datastore.Revision) error {
+func (ds *sqliteDatastore) loadRevision(ctx context.Context) (uint64, error) {
+	ctx, span := tracer.Start(ctx, "loadRevision")
+	defer span.End()
+
+	query, args, err := getLastRevision.ToSql()
+	if err != nil {
+		return 0, fmt.Errorf(errRevision, err)
+	}
+
+	var revision *uint64
+	err = ds.store.QueryRowContext(ctx, query, args...).Scan(&revision)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf(errRevision, err)
+	}
+
+	if revision == nil {
+		return 0, nil
+	}
+
+	return *revision, nil
+}
+
+func (ds *sqliteDatastore) CheckRevision(ctx context.Context, rev datastore.Revision) error {
+	if rev == datastore.NoRevision {
+		return datastore.NewInvalidRevisionErr(rev, datastore.CouldNotDetermineRevision)
+	}
+
+	rev, ok := rev.(revisions.TransactionIDRevision)
+	if !ok {
+		return fmt.Errorf("expected transaction revision, got %T", rev)
+	}
+
+	// TODO(aarongodin): implement freshness check for revision
+	// revisionTx := rev.TransactionID()
+	// freshEnough, unknown, err := mds.checkValidTransaction(ctx, revisionTx)
+	// if err != nil {
+	// 	return fmt.Errorf(errCheckRevision, err)
+	// }
+
+	// if !freshEnough {
+	// 	return datastore.NewInvalidRevisionErr(revision, datastore.RevisionStale)
+	// }
+	// if unknown {
+	// 	return datastore.NewInvalidRevisionErr(revision, datastore.CouldNotDetermineRevision)
+	// }
+
 	return nil
 }
-
-// RevisionFromString reverses the encoding process performed by MarshalBinary and String.
-func (pgd *sqliteDatastore) RevisionFromString(revisionStr string) (datastore.Revision, error) {
-	return ParseRevisionString(revisionStr)
-}
-
-// ParseRevisionString parses a revision string into a Sqlite revision.
-func ParseRevisionString(revisionStr string) (rev datastore.Revision, err error) {
-	return nil, nil
-}
-
-type sqliteRevision struct {
-}
-
-func (pr sqliteRevision) Equal(rhsRaw datastore.Revision) bool {
-	// TODO(aarongodin): implement
-	return true
-}
-
-func (pr sqliteRevision) GreaterThan(rhsRaw datastore.Revision) bool {
-	// TODO(aarongodin): implement
-	return true
-}
-
-func (pr sqliteRevision) LessThan(rhsRaw datastore.Revision) bool {
-	// TODO(aarongodin): implement
-	return true
-}
-
-func (pr sqliteRevision) DebugString() string {
-	// TODO(aarongodin): implement
-	return ""
-}
-
-func (pr sqliteRevision) String() string {
-	// TODO(aarongodin): implement
-	return ""
-}
-
-// MarshalBinary creates a version of the snapshot that uses relative encoding
-// for xmax and xip list values to save bytes when encoded as varint protos.
-// For example, snapshot 1001:1004:1001,1003 becomes 1000:3:0,2.
-func (pr sqliteRevision) MarshalBinary() ([]byte, error) {
-	// TODO(aarongodin): implement
-	return nil, nil
-}
-
-var _ datastore.Revision = sqliteRevision{}

@@ -14,6 +14,8 @@ const (
 	errReadCaveat    = "unable to read caveat: %w"
 )
 
+type caveatContext map[string]any
+
 func (r *sqliteReader) ReadCaveatByName(ctx context.Context, name string) (*core.CaveatDefinition, datastore.Revision, error) {
 	// TODO(aarongodin): implement
 	return nil, nil, nil

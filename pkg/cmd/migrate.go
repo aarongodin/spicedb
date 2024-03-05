@@ -97,13 +97,10 @@ func migrateRun(cmd *cobra.Command, args []string) error {
 		return runMigration(cmd.Context(), migrationDriver, mysqlmigrations.Manager, args[0], timeout, migrationBatachSize)
 	} else if datastoreEngine == "sqlite" {
 		log.Ctx(cmd.Context()).Info().Msg("migrating sqlite datastore")
-		// TODO(aarongodin): add migration logic for sqlite
-		var err error
 		tablePrefix, err := cmd.Flags().GetString("datastore-sqlite-table-prefix")
 		if err != nil {
 			log.Ctx(cmd.Context()).Fatal().Msg(fmt.Sprintf("unable to get table prefix: %s", err))
 		}
-
 		migrationDriver, err := sqlitemigrations.NewSQLiteDriver(dbURL, tablePrefix)
 		if err != nil {
 			return fmt.Errorf("unable to create migration driver for %s: %w", datastoreEngine, err)

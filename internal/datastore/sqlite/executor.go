@@ -15,13 +15,13 @@ type querier interface {
 	QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
 }
 
-func newSqliteExecutor(tx querier) common.ExecuteQueryFunc {
+func newSqliteExecutor(db querier) common.ExecuteQueryFunc {
 	// TODO(aarongodin): there is a note in the mysql implementation that this is
 	// intentionally not run in a transaction - do we want the same logic here?
 	return func(ctx context.Context, sqlQuery string, args []interface{}) ([]*core.RelationTuple, error) {
 		span := trace.SpanFromContext(ctx)
 
-		rows, err := tx.QueryContext(ctx, sqlQuery, args...)
+		rows, err := db.QueryContext(ctx, sqlQuery, args...)
 		if err != nil {
 			return nil, fmt.Errorf(errUnableToQueryTuples, err)
 		}
@@ -37,9 +37,7 @@ func newSqliteExecutor(tx querier) common.ExecuteQueryFunc {
 			}
 
 			var caveatName string
-			// TODO(aarongodin): the mysql datastore implements this is a map[string]any
-			// we probably want to have something similar to store misc caveats on a tuple, but caveats have yet to be handled
-			// var caveatContext caveatContextWrapper
+			var caveatContext caveatContext
 			err := rows.Scan(
 				&nextTuple.ResourceAndRelation.Namespace,
 				&nextTuple.ResourceAndRelation.ObjectId,
@@ -48,17 +46,16 @@ func newSqliteExecutor(tx querier) common.ExecuteQueryFunc {
 				&nextTuple.Subject.ObjectId,
 				&nextTuple.Subject.Relation,
 				&caveatName,
-				// &caveatContext,
+				&caveatContext,
 			)
 			if err != nil {
 				return nil, fmt.Errorf(errUnableToQueryTuples, err)
 			}
 
-			// TODO(aarongodin): assign the .Caveat
-			// nextTuple.Caveat, err = common.ContextualizedCaveatFrom(caveatName, caveatContext)
-			// if err != nil {
-			// 	return nil, fmt.Errorf(errUnableToQueryTuples, err)
-			// }
+			nextTuple.Caveat, err = common.ContextualizedCaveatFrom(caveatName, caveatContext)
+			if err != nil {
+				return nil, fmt.Errorf(errUnableToQueryTuples, err)
+			}
 
 			tuples = append(tuples, nextTuple)
 		}

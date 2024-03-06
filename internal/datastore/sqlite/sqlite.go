@@ -81,6 +81,9 @@ func newSqliteDatastore(
 		tables:     tables,
 		q:          newQueries(tables),
 		ownedStore: true,
+		CommonDecoder: revisions.CommonDecoder{
+			Kind: revisions.TransactionID,
+		},
 	}
 
 	if err := datastore.seedDatabase(ctx); err != nil {
@@ -103,6 +106,9 @@ func newSqliteDatastoreWithInstance(
 		q:            newQueries(tables),
 		ownedStore:   false,
 		closeHandler: closeHandler,
+		CommonDecoder: revisions.CommonDecoder{
+			Kind: revisions.TransactionID,
+		},
 	}
 
 	return datastore, nil

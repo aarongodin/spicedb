@@ -16,8 +16,8 @@ const (
 	errRevisionFormat = "invalid revision format: %w"
 )
 
-func (ds *sqliteDatastore) OptimizedRevision(_ context.Context) (datastore.Revision, error) {
-	return nil, nil
+func (ds *sqliteDatastore) OptimizedRevision(ctx context.Context) (datastore.Revision, error) {
+	return ds.HeadRevision(ctx)
 }
 
 func (ds *sqliteDatastore) HeadRevision(ctx context.Context) (datastore.Revision, error) {

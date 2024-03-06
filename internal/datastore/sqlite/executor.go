@@ -11,11 +11,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-type querier interface {
-	QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
-}
-
-func newSqliteExecutor(db querier) common.ExecuteQueryFunc {
+func newSqliteExecutor(db *sql.DB) common.ExecuteQueryFunc {
 	// TODO(aarongodin): there is a note in the mysql implementation that this is
 	// intentionally not run in a transaction - do we want the same logic here?
 	return func(ctx context.Context, sqlQuery string, args []interface{}) ([]*core.RelationTuple, error) {

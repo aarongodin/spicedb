@@ -16,11 +16,6 @@ const (
 	errRevisionFormat = "invalid revision format: %w"
 )
 
-var (
-	getLastRevision = builder.Select("MAX(id)").From(tableTransaction).Limit(1)
-	createRevision  = fmt.Sprintf("INSERT INTO %s DEFAULT VALUES;", tableTransaction)
-)
-
 func (ds *sqliteDatastore) OptimizedRevision(_ context.Context) (datastore.Revision, error) {
 	return nil, nil
 }
@@ -41,13 +36,13 @@ func (ds *sqliteDatastore) loadRevision(ctx context.Context) (uint64, error) {
 	ctx, span := tracer.Start(ctx, "loadRevision")
 	defer span.End()
 
-	query, args, err := getLastRevision.ToSql()
+	query, args, err := ds.q.selectLastTransactionID.ToSql()
 	if err != nil {
 		return 0, fmt.Errorf(errRevision, err)
 	}
 
 	var revision *uint64
-	err = ds.store.QueryRowContext(ctx, query, args...).Scan(&revision)
+	err = ds.db.QueryRowContext(ctx, query, args...).Scan(&revision)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
@@ -87,16 +82,4 @@ func (ds *sqliteDatastore) CheckRevision(ctx context.Context, rev datastore.Revi
 	// }
 
 	return nil
-}
-
-func createTransaction(ctx context.Context, tx *sql.Tx) (uint64, error) {
-	result, err := tx.ExecContext(ctx, createRevision)
-	if err != nil {
-		return 0, fmt.Errorf("failed creating transaction: %w", err)
-	}
-	lastInsertID, err := result.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("failed to get last inserted id: %w", err)
-	}
-	return uint64(lastInsertID), nil
 }

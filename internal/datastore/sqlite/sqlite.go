@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/authzed/spicedb/internal/datastore/common"
 	"github.com/authzed/spicedb/internal/datastore/revisions"
+	"github.com/authzed/spicedb/internal/datastore/sqlite/util"
 	"github.com/authzed/spicedb/pkg/datastore"
 	"github.com/authzed/spicedb/pkg/datastore/options"
 
@@ -22,37 +22,13 @@ func init() {
 }
 
 const (
-	Engine           = "sqlite"
-	tableNamespace   = "namespace_config"
-	tableTransaction = "relation_tuple_transaction"
-	tableTuple       = "relation_tuple"
-	tableCaveat      = "caveat"
-
-	colTimestamp        = "timestamp"
-	colNamespace        = "namespace"
-	colConfig           = "serialized_config"
-	colCreatedTxn       = "created_transaction"
-	colDeletedTxn       = "deleted_transaction"
-	colObjectID         = "object_id"
-	colRelation         = "relation"
-	colUsersetNamespace = "userset_namespace"
-	colUsersetObjectID  = "userset_object_id"
-	colUsersetRelation  = "userset_relation"
-	colCaveatName       = "name"
-	// colCaveatDefinition  = "definition"
-	colCaveatContextName = "caveat_name"
-	colCaveatContext     = "caveat_context"
-
+	Engine                 = "sqlite"
 	errUnableToInstantiate = "unable to instantiate datastore"
-
-	// This is the largest positive integer possible in postgresql
-	// TODO(aarongodin): need to determine what is the largest possible int for sqlite
-	liveDeletedTxnID = uint64(9223372036854775807)
+	liveDeletedTxnID       = uint64(9_223_372_036_854_775_807) // largest 64-bit integer
 )
 
 var (
-	tracer  = otel.Tracer("spicedb/internal/datastore/sqlite")
-	builder = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+	tracer = otel.Tracer("spicedb/internal/datastore/sqlite")
 )
 
 type CloseHandler func(*sql.DB) error
@@ -99,9 +75,11 @@ func newSqliteDatastore(
 		return nil, common.RedactAndLogSensitiveConnString(ctx, errUnableToInstantiate, err, url)
 	}
 
+	tables := NewTables(config.tablePrefix)
 	datastore := &sqliteDatastore{
-		store:      db,
-		tables:     NewTables(config.tablePrefix),
+		db:         db,
+		tables:     tables,
+		q:          newQueries(tables),
 		ownedStore: true,
 	}
 
@@ -118,9 +96,11 @@ func newSqliteDatastoreWithInstance(
 	closeHandler CloseHandler,
 	tablePrefix string,
 ) (datastore.Datastore, error) {
+	tables := NewTables(tablePrefix)
 	datastore := &sqliteDatastore{
-		store:        instance,
-		tables:       NewTables(tablePrefix),
+		db:           instance,
+		tables:       tables,
+		q:            newQueries(tables),
 		ownedStore:   false,
 		closeHandler: closeHandler,
 	}
@@ -130,58 +110,21 @@ func newSqliteDatastoreWithInstance(
 
 type sqliteDatastore struct {
 	revisions.CommonDecoder
-
-	store  *sql.DB
-	tables *Tables
-	// ownedStore is true given the DB connection has been created by this package with sql.Open
-	ownedStore bool
-	// user-supplied callback for closing the datastore, given ownedStore is false
+	db           *sql.DB
+	tables       *Tables
+	q            *queries
+	ownedStore   bool
 	closeHandler CloseHandler
 }
 
-func sqlTxClosure(ctx context.Context, db *sql.DB, txOptions *sql.TxOptions, fn func(*sql.Tx) error) error {
-	tx, err := db.BeginTx(ctx, txOptions)
-	if err != nil {
-		return err
-	}
-
-	if err := fn(tx); err != nil {
-		rerr := tx.Rollback()
-		if rerr != nil {
-			return errors.Join(err, rerr)
-		}
-
-		return err
-	}
-
-	return tx.Commit()
-}
-
 func (ds *sqliteDatastore) SnapshotReader(rev datastore.Revision) datastore.Reader {
-	createTxFunc := func(ctx context.Context) (*sql.Tx, txCleanupFunc, error) {
-		// TODO(aarongodin): determine if we would like to pass in any options to BeginTx(..)
-		tx, err := ds.store.BeginTx(ctx, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		return tx, tx.Rollback, nil
-	}
-
-	executor := common.QueryExecutor{
-		Executor: newSqliteExecutor(ds.store),
-	}
-
 	return &sqliteReader{
-		txSource: createTxFunc,
-		executor: executor,
-		filterer: func(original sq.SelectBuilder) sq.SelectBuilder {
-			return original.Where(sq.LtOrEq{colCreatedTxn: rev.(revisions.TransactionIDRevision).TransactionID()}).
-				Where(sq.Or{
-					sq.Eq{colDeletedTxn: liveDeletedTxnID},
-					sq.Gt{colDeletedTxn: rev},
-				})
+		ds.q,
+		util.NewTxFactory(ds.db),
+		common.QueryExecutor{
+			Executor: newSqliteExecutor(ds.db),
 		},
+		ds.q.newTransactionSelector(rev),
 	}
 }
 
@@ -201,32 +144,29 @@ func (ds *sqliteDatastore) ReadWriteTx(
 	)
 
 	// TODO(aarongodin): determine if sqlite has support for TxOptions we would like to include in particular, `Isolation`
-	err = sqlTxClosure(ctx, ds.store, &sql.TxOptions{}, func(tx *sql.Tx) error {
+	err = util.WithTx(ctx, ds.db, &sql.TxOptions{}, func(tx *sql.Tx) error {
 		var ierr error
-		transactionID, ierr = createTransaction(ctx, tx)
+		transactionID, ierr = ds.createTransaction(ctx, tx)
 		if ierr != nil {
 			return fmt.Errorf("unable to create new txn ID: %w", err)
 		}
 
-		txSource := func(context.Context) (*sql.Tx, txCleanupFunc, error) {
-			return tx, func() error { return nil }, nil
-		}
-
 		executor := common.QueryExecutor{
-			Executor: newSqliteExecutor(ds.store),
+			Executor: newSqliteExecutor(ds.db),
 		}
 
 		rwt := &sqliteReadWriteTransaction{
-			sqliteReader: &sqliteReader{
-				txSource: txSource,
-				executor: executor,
-				filterer: func(original sq.SelectBuilder) sq.SelectBuilder {
+			&sqliteReader{
+				ds.q,
+				util.NewTxFactoryWithInstance(tx),
+				executor,
+				func(original sq.SelectBuilder) sq.SelectBuilder {
 					return original.Where(sq.Eq{colDeletedTxn: liveDeletedTxnID})
 				},
 			},
-			tx:            tx,
-			transactionID: transactionID,
-			tables:        ds.tables,
+			ds.q,
+			tx,
+			transactionID,
 		}
 
 		return fn(ctx, rwt)
@@ -238,6 +178,19 @@ func (ds *sqliteDatastore) ReadWriteTx(
 	}
 
 	return revisions.NewForTransactionID(transactionID), nil
+}
+
+func (ds *sqliteDatastore) createTransaction(ctx context.Context, tx *sql.Tx) (uint64, error) {
+	query := fmt.Sprintf("INSERT INTO %s DEFAULT VALUES;", ds.tables.tableTransaction)
+	result, err := tx.ExecContext(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("failed creating transaction: %w", err)
+	}
+	lastInsertID, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get last inserted id: %w", err)
+	}
+	return uint64(lastInsertID), nil
 }
 
 func (ds *sqliteDatastore) Watch(ctx context.Context, afterRevision datastore.Revision, options datastore.WatchOptions) (<-chan *datastore.RevisionChanges, <-chan error) {
@@ -263,22 +216,18 @@ func (ds *sqliteDatastore) Statistics(ctx context.Context) (datastore.Stats, err
 	return datastore.Stats{}, nil
 }
 
-// Close closes the data store.
 func (ds *sqliteDatastore) Close() error {
 	if ds.ownedStore {
-		if err := ds.store.Close(); err != nil {
+		if err := ds.db.Close(); err != nil {
 			return fmt.Errorf("unable to close sqlite store: %w", err)
 		}
 	} else {
 		if ds.closeHandler != nil {
-			if err := ds.closeHandler(ds.store); err != nil {
+			if err := ds.closeHandler(ds.db); err != nil {
 				return fmt.Errorf("unable to close sqlite store: %w", err)
 			}
 		}
 	}
-
-	// TODO: reference other implementations to see if there are close steps
-	// required for ongoing transactions or other aspects of using the db
 
 	return nil
 }

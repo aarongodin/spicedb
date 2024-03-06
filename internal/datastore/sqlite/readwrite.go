@@ -18,16 +18,13 @@ const (
 	errUnableToDeleteRelationships    = "unable to delete relationships: %w"
 	errUnableToWriteConfig            = "unable to write namespace config: %w"
 	errUnableToDeleteConfig           = "unable to delete namespace config: %w"
-
-	bulkInsertRowsLimit = 1_000
 )
 
 type sqliteReadWriteTransaction struct {
 	*sqliteReader
-
+	q             *queries
 	tx            *sql.Tx
 	transactionID uint64
-	tables        *Tables
 }
 
 func (rwt *sqliteReadWriteTransaction) WriteRelationships(ctx context.Context, mutations []*core.RelationTupleUpdate) error {
@@ -40,9 +37,7 @@ func (rwt *sqliteReadWriteTransaction) DeleteRelationships(ctx context.Context, 
 
 func (rwt *sqliteReadWriteTransaction) WriteNamespaces(ctx context.Context, newConfigs ...*core.NamespaceDefinition) error {
 	deletedNamespaceClause := sq.Or{}
-	writeQuery := builder.Insert(rwt.tables.tableNamespace).Columns(
-		colNamespace, colConfig, colCreatedTxn,
-	)
+	writeQuery := rwt.q.insertNamespace
 
 	for _, ns := range newConfigs {
 		serialized, err := proto.Marshal(ns)
@@ -53,7 +48,7 @@ func (rwt *sqliteReadWriteTransaction) WriteNamespaces(ctx context.Context, newC
 		writeQuery = writeQuery.Values(ns.Name, serialized, rwt.transactionID)
 	}
 
-	delQuery, delArgs, err := builder.Update(rwt.tables.tableNamespace).
+	delQuery, delArgs, err := rwt.q.updateNamespace.
 		Where(sq.Eq{colDeletedTxn: liveDeletedTxnID}).
 		Set(colDeletedTxn, rwt.transactionID).
 		Where(sq.And{sq.Eq{colDeletedTxn: liveDeletedTxnID}, deletedNamespaceClause}).

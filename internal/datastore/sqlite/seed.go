@@ -8,10 +8,6 @@ import (
 	"github.com/authzed/spicedb/pkg/datastore"
 )
 
-var (
-	insertFirstRevision = fmt.Sprintf("INSERT INTO %s (id, timestamp) VALUES (1, datetime(1, 'unixepoch')) ON CONFLICT DO NOTHING;", tableTransaction)
-)
-
 func (ds *sqliteDatastore) isSeeded(ctx context.Context) (bool, error) {
 	headRevision, err := ds.HeadRevision(ctx)
 	if err != nil {
@@ -36,7 +32,8 @@ func (ds *sqliteDatastore) seedDatabase(ctx context.Context) error {
 		return nil
 	}
 
-	result, err := ds.store.ExecContext(ctx, insertFirstRevision)
+	insertFirstRevisionQuery := fmt.Sprintf("INSERT INTO %s (id, timestamp) VALUES (1, datetime(1, 'unixepoch')) ON CONFLICT DO NOTHING;", ds.tables.tableTransaction)
+	result, err := ds.db.ExecContext(ctx, insertFirstRevisionQuery)
 	if err != nil {
 		return fmt.Errorf("seedDatabase: %w", err)
 	}

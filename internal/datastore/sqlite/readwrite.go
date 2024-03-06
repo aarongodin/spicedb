@@ -3,10 +3,23 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
+	sq "github.com/Masterminds/squirrel"
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/authzed/spicedb/pkg/datastore"
 	core "github.com/authzed/spicedb/pkg/proto/core/v1"
+	"google.golang.org/protobuf/proto"
+)
+
+const (
+	errUnableToWriteRelationships     = "unable to write relationships: %w"
+	errUnableToBulkWriteRelationships = "unable to bulk write relationships: %w"
+	errUnableToDeleteRelationships    = "unable to delete relationships: %w"
+	errUnableToWriteConfig            = "unable to write namespace config: %w"
+	errUnableToDeleteConfig           = "unable to delete namespace config: %w"
+
+	bulkInsertRowsLimit = 1_000
 )
 
 type sqliteReadWriteTransaction struct {
@@ -14,6 +27,7 @@ type sqliteReadWriteTransaction struct {
 
 	tx            *sql.Tx
 	transactionID uint64
+	tables        *Tables
 }
 
 func (rwt *sqliteReadWriteTransaction) WriteRelationships(ctx context.Context, mutations []*core.RelationTupleUpdate) error {
@@ -25,6 +39,44 @@ func (rwt *sqliteReadWriteTransaction) DeleteRelationships(ctx context.Context, 
 }
 
 func (rwt *sqliteReadWriteTransaction) WriteNamespaces(ctx context.Context, newConfigs ...*core.NamespaceDefinition) error {
+	deletedNamespaceClause := sq.Or{}
+	writeQuery := builder.Insert(rwt.tables.tableNamespace).Columns(
+		colNamespace, colConfig, colCreatedTxn,
+	)
+
+	for _, ns := range newConfigs {
+		serialized, err := proto.Marshal(ns)
+		if err != nil {
+			return fmt.Errorf(errUnableToWriteConfig, err)
+		}
+		deletedNamespaceClause = append(deletedNamespaceClause, sq.Eq{colNamespace: ns.Name})
+		writeQuery = writeQuery.Values(ns.Name, serialized, rwt.transactionID)
+	}
+
+	delQuery, delArgs, err := builder.Update(rwt.tables.tableNamespace).
+		Where(sq.Eq{colDeletedTxn: liveDeletedTxnID}).
+		Set(colDeletedTxn, rwt.transactionID).
+		Where(sq.And{sq.Eq{colDeletedTxn: liveDeletedTxnID}, deletedNamespaceClause}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf(errUnableToWriteConfig, err)
+	}
+
+	_, err = rwt.tx.ExecContext(ctx, delQuery, delArgs...)
+	if err != nil {
+		return fmt.Errorf(errUnableToWriteConfig, err)
+	}
+
+	query, args, err := writeQuery.ToSql()
+	if err != nil {
+		return fmt.Errorf(errUnableToWriteConfig, err)
+	}
+
+	_, err = rwt.tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf(errUnableToWriteConfig, err)
+	}
+
 	return nil
 }
 

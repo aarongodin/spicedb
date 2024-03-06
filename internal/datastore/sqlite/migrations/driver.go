@@ -9,6 +9,7 @@ import (
 
 	sq "github.com/Masterminds/squirrel"
 
+	"github.com/authzed/spicedb/internal/datastore/sqlite"
 	"github.com/authzed/spicedb/pkg/migrate"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -23,8 +24,8 @@ var builder = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 
 // SQLiteDriver is an implementation of migrate.Driver for SQLite
 type SQLiteDriver struct {
-	db *sql.DB
-	*tables
+	db     *sql.DB
+	tables *sqlite.Tables
 }
 
 func NewSQLiteDriver(path string, tablePrefix string) (*SQLiteDriver, error) {
@@ -36,12 +37,12 @@ func NewSQLiteDriver(path string, tablePrefix string) (*SQLiteDriver, error) {
 }
 
 func NewSQLiteDriverFromDB(db *sql.DB, tablePrefix string) *SQLiteDriver {
-	return &SQLiteDriver{db, newTables(tablePrefix)}
+	return &SQLiteDriver{db, sqlite.NewTables(tablePrefix)}
 }
 
 func (driver *SQLiteDriver) Version(ctx context.Context) (string, error) {
 	query, args, err := builder.Select("version").
-		From(driver.migrationVersion()).
+		From(driver.tables.MigrationVersion()).
 		OrderBy("id desc").
 		ToSql()
 	if err != nil {
@@ -94,7 +95,7 @@ func BeginTxFunc(ctx context.Context, db *sql.DB, txOptions *sql.TxOptions, f fu
 
 func (driver *SQLiteDriver) WriteVersion(ctx context.Context, txWrapper TxWrapper, version, replaced string) error {
 	query, args, err := builder.
-		Insert(driver.tables.migrationVersion()).
+		Insert(driver.tables.MigrationVersion()).
 		Columns("version").
 		Values(version).ToSql()
 	if err != nil {

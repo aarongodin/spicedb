@@ -1,4 +1,4 @@
-package migrations
+package sqlite
 
 const (
 	tableNamespaceDefault   = "namespace_config"
@@ -9,7 +9,7 @@ const (
 	tableCaveatDefault      = "caveat"
 )
 
-type tables struct {
+type Tables struct {
 	tableMigrationVersion string
 	tableTransaction      string
 	tableTuple            string
@@ -18,8 +18,10 @@ type tables struct {
 	tableCaveat           string
 }
 
-func newTables(prefix string) *tables {
-	return &tables{
+// NewTables creates a struct of table names for this sqlite instance.
+// The prefix is optional and can be an empty string.
+func NewTables(prefix string) *Tables {
+	return &Tables{
 		tableMigrationVersion: prefix + tableMigrationVersion,
 		tableTransaction:      prefix + tableTransactionDefault,
 		tableTuple:            prefix + tableTupleDefault,
@@ -29,29 +31,29 @@ func newTables(prefix string) *tables {
 	}
 }
 
-func (tn *tables) migrationVersion() string {
-	return tn.tableMigrationVersion
+func (t *Tables) MigrationVersion() string {
+	return t.tableMigrationVersion
 }
 
 // RelationTupleTransaction returns the prefixed transaction table name.
-func (tn *tables) RelationTupleTransaction() string {
-	return tn.tableTransaction
+func (t *Tables) RelationTupleTransaction() string {
+	return t.tableTransaction
 }
 
 // RelationTuple returns the prefixed relationship tuple table name.
-func (tn *tables) RelationTuple() string {
-	return tn.tableTuple
+func (t *Tables) RelationTuple() string {
+	return t.tableTuple
 }
 
 // Namespace returns the prefixed namespace table name.
-func (tn *tables) Namespace() string {
-	return tn.tableNamespace
+func (t *Tables) Namespace() string {
+	return t.tableNamespace
 }
 
-func (tn *tables) Metadata() string {
-	return tn.tableMetadata
+func (t *Tables) Metadata() string {
+	return t.tableMetadata
 }
 
-func (tn *tables) Caveat() string {
-	return tn.tableCaveat
+func (t *Tables) Caveat() string {
+	return t.tableCaveat
 }

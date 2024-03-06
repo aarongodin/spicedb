@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/authzed/spicedb/internal/datastore/sqlite"
 	"github.com/authzed/spicedb/pkg/migrate"
 )
 
@@ -23,13 +24,13 @@ var (
 // Wrapper makes it possible to forward the table schema needed for MySQL MigrationFunc to run
 type Wrapper struct {
 	db     *sql.DB
-	tables *tables
+	tables *sqlite.Tables
 }
 
 // TxWrapper makes it possible to forward the table schema to a transactional migration func.
 type TxWrapper struct {
 	tx     *sql.Tx
-	tables *tables
+	tables *sqlite.Tables
 }
 
 func mustRegisterMigration(version, replaces string, up migrate.MigrationFunc[Wrapper], upTx migrate.TxMigrationFunc[TxWrapper]) {

@@ -26,9 +26,9 @@ const (
 	tableNamespace   = "namespace_config"
 	tableTransaction = "relation_tuple_transaction"
 	tableTuple       = "relation_tuple"
-	// tableCaveat      = "caveat"
+	tableCaveat      = "caveat"
 
-	// colTimestamp         = "timestamp"
+	colTimestamp        = "timestamp"
 	colNamespace        = "namespace"
 	colConfig           = "serialized_config"
 	colCreatedTxn       = "created_transaction"
@@ -48,12 +48,6 @@ const (
 	// This is the largest positive integer possible in postgresql
 	// TODO(aarongodin): need to determine what is the largest possible int for sqlite
 	liveDeletedTxnID = uint64(9223372036854775807)
-
-	// tracingDriverName = "postgres-tracing"
-
-	// gcBatchDeleteSize = 1000
-
-	// livingTupleConstraint = "uq_relation_tuple_living_xid"
 )
 
 var (
@@ -82,8 +76,9 @@ func NewSqliteDatastoreWithInstance(
 	ctx context.Context,
 	instance *sql.DB,
 	closeHandler CloseHandler,
+	tablePrefix string,
 ) (datastore.Datastore, error) {
-	return newSqliteDatastoreWithInstance(ctx, instance, closeHandler)
+	return newSqliteDatastoreWithInstance(ctx, instance, closeHandler, tablePrefix)
 }
 
 func newSqliteDatastore(
@@ -91,7 +86,7 @@ func newSqliteDatastore(
 	url string,
 	options ...Option,
 ) (datastore.Datastore, error) {
-	_, err := generateConfig(options)
+	config, err := generateConfig(options)
 	if err != nil {
 		return nil, common.RedactAndLogSensitiveConnString(ctx, errUnableToInstantiate, err, url)
 	}
@@ -106,6 +101,7 @@ func newSqliteDatastore(
 
 	datastore := &sqliteDatastore{
 		store:      db,
+		tables:     NewTables(config.tablePrefix),
 		ownedStore: true,
 	}
 
@@ -120,9 +116,11 @@ func newSqliteDatastoreWithInstance(
 	_ context.Context,
 	instance *sql.DB,
 	closeHandler CloseHandler,
+	tablePrefix string,
 ) (datastore.Datastore, error) {
 	datastore := &sqliteDatastore{
 		store:        instance,
+		tables:       NewTables(tablePrefix),
 		ownedStore:   false,
 		closeHandler: closeHandler,
 	}
@@ -133,10 +131,11 @@ func newSqliteDatastoreWithInstance(
 type sqliteDatastore struct {
 	revisions.CommonDecoder
 
-	store *sql.DB
-	// an owned store is one that has been instantiated by this package
+	store  *sql.DB
+	tables *Tables
+	// ownedStore is true given the DB connection has been created by this package with sql.Open
 	ownedStore bool
-	// user-supplied callback for closing the datastore
+	// user-supplied callback for closing the datastore, given ownedStore is false
 	closeHandler CloseHandler
 }
 
@@ -227,6 +226,7 @@ func (ds *sqliteDatastore) ReadWriteTx(
 			},
 			tx:            tx,
 			transactionID: transactionID,
+			tables:        ds.tables,
 		}
 
 		return fn(ctx, rwt)

@@ -469,5 +469,8 @@ func newMemoryDatstore(_ context.Context, opts Config) (datastore.Datastore, err
 }
 
 func newSqliteEngine(ctx context.Context, opts Config) (datastore.Datastore, error) {
-	return sqlite.NewSqliteDatastore(ctx, opts.URI)
+	sqliteOpts := []sqlite.Option{
+		sqlite.TablePrefix(opts.TablePrefix),
+	}
+	return sqlite.NewSqliteDatastore(ctx, opts.URI, sqliteOpts...)
 }

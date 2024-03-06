@@ -1,16 +1,20 @@
 package migrations
 
-import "fmt"
+import (
+	"fmt"
 
-func createMigrationVersion(t *tables) string {
+	"github.com/authzed/spicedb/internal/datastore/sqlite"
+)
+
+func createMigrationVersion(t *sqlite.Tables) string {
 	return fmt.Sprintf(`CREATE TABLE %s (
 		id INTEGER NOT NULL PRIMARY KEY,
 		version TEXT NOT NULL);`,
-		t.migrationVersion(),
+		t.MigrationVersion(),
 	)
 }
 
-func createNamespaceConfig(t *tables) string {
+func createNamespaceConfig(t *sqlite.Tables) string {
 	return fmt.Sprintf(`CREATE TABLE %s (
 		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 		namespace TEXT NOT NULL,
@@ -22,7 +26,7 @@ func createNamespaceConfig(t *tables) string {
 	)
 }
 
-func createRelationTuple(t *tables) string {
+func createRelationTuple(t *sqlite.Tables) string {
 	return fmt.Sprintf(`CREATE TABLE %s (
 		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 		namespace TEXT NOT NULL,
@@ -44,7 +48,7 @@ func createRelationTuple(t *tables) string {
 	)
 }
 
-func createRelationTupleTransaction(t *tables) string {
+func createRelationTupleTransaction(t *sqlite.Tables) string {
 	return fmt.Sprintf(`CREATE TABLE %s (
 		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL);
@@ -53,7 +57,7 @@ func createRelationTupleTransaction(t *tables) string {
 	)
 }
 
-func createCaveatTable(t *tables) string {
+func createCaveatTable(t *sqlite.Tables) string {
 	return fmt.Sprintf(`CREATE TABLE %s (
     name TEXT NOT NULL,
     definition BLOB NOT NULL,

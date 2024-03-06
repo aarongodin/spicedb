@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	log "github.com/authzed/spicedb/internal/logging"
 )
 
 var (
@@ -39,9 +41,9 @@ func (txf TxFactory) WithTx(ctx context.Context, fn TxUserFunc) error {
 		return err
 	}
 	if err := fn(tx); err != nil {
-		// TODO(aarongodin): common.LogOnError(ctx, txCleanup)
 		rerr := txCleanup()
 		if rerr != nil {
+			log.Ctx(ctx).Err(rerr).Msg("datastore error")
 			return errors.Join(err, rerr)
 		}
 

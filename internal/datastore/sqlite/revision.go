@@ -67,19 +67,5 @@ func (ds *sqliteDatastore) CheckRevision(ctx context.Context, rev datastore.Revi
 		return fmt.Errorf("expected transaction revision, got %T", rev)
 	}
 
-	// TODO(aarongodin): implement freshness check for revision
-	// revisionTx := rev.TransactionID()
-	// freshEnough, unknown, err := mds.checkValidTransaction(ctx, revisionTx)
-	// if err != nil {
-	// 	return fmt.Errorf(errCheckRevision, err)
-	// }
-
-	// if !freshEnough {
-	// 	return datastore.NewInvalidRevisionErr(revision, datastore.RevisionStale)
-	// }
-	// if unknown {
-	// 	return datastore.NewInvalidRevisionErr(revision, datastore.CouldNotDetermineRevision)
-	// }
-
 	return nil
 }

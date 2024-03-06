@@ -67,9 +67,7 @@ func newSqliteDatastore(
 		return nil, common.RedactAndLogSensitiveConnString(ctx, errUnableToInstantiate, err, url)
 	}
 
-	// TODO(aarongodin): parsing any additional options and setup of sqlite-specific items
-	// goes here
-	// TODO(aarongodin) - drive options through this
+	// TODO(aarongodin): parsing any additional options and setup of sqlite-specific items goes here
 	db, err := sql.Open("sqlite3", url)
 	if err != nil {
 		return nil, common.RedactAndLogSensitiveConnString(ctx, errUnableToInstantiate, err, url)

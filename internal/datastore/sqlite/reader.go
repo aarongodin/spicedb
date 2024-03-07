@@ -27,6 +27,8 @@ const (
 	errUnableToReadConfig     = "unable to read namespace config: %w"
 	errUnableToListNamespaces = "unable to list namespaces: %w"
 	errUnableToQueryTuples    = "unable to query tuples: %w"
+	errListCaveats            = "unable to list caveats: %w"
+	errReadCaveat             = "unable to read caveat: %w"
 )
 
 func (r *sqliteReader) QueryRelationships(
@@ -167,4 +169,77 @@ func (r *sqliteReader) loadNamespaces(ctx context.Context, filteredQuery sq.Sele
 	}
 
 	return nsDefs, nil
+}
+
+func (r *sqliteReader) ReadCaveatByName(ctx context.Context, name string) (*core.CaveatDefinition, datastore.Revision, error) {
+	caveats, err := r.LookupCaveatsWithNames(ctx, []string{name})
+	if err != nil {
+		return nil, nil, fmt.Errorf(errReadCaveat, err)
+	}
+	if len(caveats) != 1 {
+		return nil, nil, fmt.Errorf("read caveats: data integrity error - multiple caveats with name %s for a single revision", name)
+	}
+	return caveats[0].Definition, caveats[0].LastWrittenRevision, nil
+}
+
+func (r *sqliteReader) LookupCaveatsWithNames(ctx context.Context, caveatNames []string) ([]datastore.RevisionedCaveat, error) {
+	if len(caveatNames) == 0 {
+		return nil, nil
+	}
+	return r.listCaveats(ctx, caveatNames)
+}
+
+func (r *sqliteReader) ListAllCaveats(ctx context.Context) ([]datastore.RevisionedCaveat, error) {
+	return r.listCaveats(ctx, nil)
+}
+
+func (r *sqliteReader) listCaveats(ctx context.Context, caveatNames []string) ([]datastore.RevisionedCaveat, error) {
+	caveatsWithNames := r.q.selectCaveat
+	if len(caveatNames) > 0 {
+		caveatsWithNames = caveatsWithNames.Where(sq.Eq{colName: caveatNames})
+	}
+
+	listSQL, listArgs, err := r.filterer(caveatsWithNames).ToSql()
+	if err != nil {
+		return nil, err
+	}
+
+	caveats := make([]datastore.RevisionedCaveat, 0)
+	err = r.txFactory.WithTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, listSQL, listArgs...)
+		if err != nil {
+			return err
+		}
+		defer common.LogOnError(ctx, rows.Close)
+
+		for rows.Next() {
+			var defBytes []byte
+			var txID uint64
+
+			err = rows.Scan(&defBytes, &txID)
+			if err != nil {
+				return err
+			}
+			c := core.CaveatDefinition{}
+			err = c.UnmarshalVT(defBytes)
+			if err != nil {
+				return err
+			}
+			caveats = append(caveats, datastore.RevisionedCaveat{
+				Definition:          &c,
+				LastWrittenRevision: revisions.NewForTransactionID(txID),
+			})
+		}
+
+		if rows.Err() != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf(errListCaveats, err)
+	}
+
+	return caveats, nil
 }

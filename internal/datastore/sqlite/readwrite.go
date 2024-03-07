@@ -21,6 +21,7 @@ const (
 	errUnableToDeleteRelationships    = "unable to delete relationships: %w"
 	errUnableToWriteConfig            = "unable to write namespace config: %w"
 	errUnableToDeleteConfig           = "unable to delete namespace config: %w"
+	errWriteCaveats                   = "unable to write caveats: %w"
 )
 
 type sqliteReadWriteTransaction struct {
@@ -226,10 +227,52 @@ func (rwt *sqliteReadWriteTransaction) BulkLoad(ctx context.Context, iter datast
 }
 
 func (rwt *sqliteReadWriteTransaction) WriteCaveats(ctx context.Context, caveats []*core.CaveatDefinition) error {
+	if len(caveats) == 0 {
+		return nil
+	}
+
+	insertQuery := rwt.q.insertCaveat
+	caveatNames := make([]string, 0, len(caveats))
+	for _, newCaveat := range caveats {
+		serialized, err := newCaveat.MarshalVT()
+		if err != nil {
+			return fmt.Errorf("unable to serialize caveat: %w", err)
+		}
+
+		insertQuery = insertQuery.Values(newCaveat.Name, serialized, rwt.transactionID)
+		caveatNames = append(caveatNames, newCaveat.Name)
+	}
+
+	if err := rwt.DeleteCaveats(ctx, caveatNames); err != nil {
+		return err
+	}
+
+	query, args, err := insertQuery.ToSql()
+	if err != nil {
+		return fmt.Errorf(errWriteCaveats, err)
+	}
+
+	_, err = rwt.tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf(errWriteCaveats, err)
+	}
+
 	return nil
 }
 
 func (rwt *sqliteReadWriteTransaction) DeleteCaveats(ctx context.Context, names []string) error {
+	delSQL, delArgs, err := rwt.q.updateCaveat.
+		Set(colDeletedTxn, rwt.transactionID).
+		Where(sq.Eq{colName: names}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("deleting caveats: %w", err)
+	}
+
+	_, err = rwt.tx.ExecContext(ctx, delSQL, delArgs...)
+	if err != nil {
+		return fmt.Errorf("deleting caveats: %w", err)
+	}
 	return nil
 }
 

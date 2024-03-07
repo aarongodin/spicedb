@@ -51,17 +51,21 @@ type queries struct {
 	selectTupleWithID       sq.SelectBuilder
 	selectNamespace         sq.SelectBuilder
 	selectLastTransactionID sq.SelectBuilder
+	selectTransaction       sq.SelectBuilder
 	selectMetadata          sq.SelectBuilder
 	selectTupleCount        sq.SelectBuilder
+	selectCaveat            sq.SelectBuilder
 
 	// Insert
 	insertNamespace sq.InsertBuilder
 	insertTuple     sq.InsertBuilder
 	insertMetadata  sq.InsertBuilder
+	insertCaveat    sq.InsertBuilder
 
 	// Update
 	updateNamespace sq.UpdateBuilder
 	updateTuple     sq.UpdateBuilder
+	updateCaveat    sq.UpdateBuilder
 
 	// Conjunctions
 	tupleEquality func(*core.RelationTuple) sq.Eq
@@ -101,9 +105,11 @@ func newQueries(tables *Tables) *queries {
 			colCaveatContext,
 		).From(tables.tableTuple),
 		selectNamespace:         builder.Select(colConfig, colCreatedTxn).From(tables.tableNamespace),
+		selectTransaction:       builder.Select(colID).From(tables.tableTransaction),
 		selectLastTransactionID: builder.Select("MAX(id)").From(tables.tableTransaction).Limit(1),
 		selectMetadata:          builder.Select(colDatabaseIdent).From(tables.tableMetadata),
 		selectTupleCount:        builder.Select("COUNT(id)").From(tables.tableTuple),
+		selectCaveat:            builder.Select(colDefinition, colCreatedTxn).From(tables.tableCaveat).OrderBy(colName),
 
 		// Insert
 		insertNamespace: builder.Insert(tables.tableNamespace).Columns(
@@ -121,10 +127,16 @@ func newQueries(tables *Tables) *queries {
 			colCreatedTxn,
 		),
 		insertMetadata: builder.Insert(tables.tableMetadata).Columns(colDatabaseIdent),
+		insertCaveat: builder.Insert(tables.tableCaveat).Columns(
+			colName,
+			colDefinition,
+			colCreatedTxn,
+		),
 
 		// Update
 		updateNamespace: builder.Update(tables.tableNamespace),
 		updateTuple:     builder.Update(tables.tableTuple),
+		updateCaveat:    builder.Update(tables.tableCaveat).Where(sq.Eq{colDeletedTxn: liveDeletedTxnID}),
 
 		// Conjunctions
 		tupleEquality: func(r *core.RelationTuple) sq.Eq {

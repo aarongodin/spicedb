@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	sq "github.com/Masterminds/squirrel"
 	"github.com/authzed/spicedb/internal/datastore/revisions"
 	"github.com/authzed/spicedb/pkg/datastore"
 )
@@ -21,7 +22,11 @@ func (ds *sqliteDatastore) OptimizedRevision(ctx context.Context) (datastore.Rev
 }
 
 func (ds *sqliteDatastore) HeadRevision(ctx context.Context) (datastore.Revision, error) {
-	revision, err := ds.loadRevision(ctx)
+	query, args, err := ds.q.selectLastTransactionID.ToSql()
+	if err != nil {
+		return datastore.NoRevision, fmt.Errorf(errRevision, err)
+	}
+	revision, err := ds.loadRevision(ctx, query, args)
 	if err != nil {
 		return datastore.NoRevision, err
 	}
@@ -32,17 +37,12 @@ func (ds *sqliteDatastore) HeadRevision(ctx context.Context) (datastore.Revision
 	return revisions.NewForTransactionID(revision), nil
 }
 
-func (ds *sqliteDatastore) loadRevision(ctx context.Context) (uint64, error) {
+func (ds *sqliteDatastore) loadRevision(ctx context.Context, query string, args []any) (uint64, error) {
 	ctx, span := tracer.Start(ctx, "loadRevision")
 	defer span.End()
 
-	query, args, err := ds.q.selectLastTransactionID.ToSql()
-	if err != nil {
-		return 0, fmt.Errorf(errRevision, err)
-	}
-
 	var revision *uint64
-	err = ds.db.QueryRowContext(ctx, query, args...).Scan(&revision)
+	err := ds.db.QueryRowContext(ctx, query, args...).Scan(&revision)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
@@ -62,9 +62,21 @@ func (ds *sqliteDatastore) CheckRevision(ctx context.Context, rev datastore.Revi
 		return datastore.NewInvalidRevisionErr(rev, datastore.CouldNotDetermineRevision)
 	}
 
-	rev, ok := rev.(revisions.TransactionIDRevision)
+	revision, ok := rev.(revisions.TransactionIDRevision)
 	if !ok {
 		return fmt.Errorf("expected transaction revision, got %T", rev)
+	}
+
+	query, args, err := ds.q.selectTransaction.Where(sq.Eq{colID: revision}).ToSql()
+	if err != nil {
+		return fmt.Errorf(errRevision, err)
+	}
+	result, err := ds.loadRevision(ctx, query, args)
+	if err != nil {
+		return fmt.Errorf(errCheckRevision, err)
+	}
+	if uint64(revision) != result {
+		return fmt.Errorf("revision not found: %d", revision)
 	}
 
 	return nil

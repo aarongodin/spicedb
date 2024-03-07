@@ -6,29 +6,44 @@ import (
 
 	log "github.com/authzed/spicedb/internal/logging"
 	"github.com/authzed/spicedb/pkg/datastore"
+	"github.com/google/uuid"
 )
 
-func (ds *sqliteDatastore) isSeeded(ctx context.Context) (bool, error) {
+type seedStatus struct {
+	hasRevision      bool
+	hasDatabaseIdent bool
+}
+
+func (s seedStatus) done() bool {
+	return s.hasRevision && s.hasDatabaseIdent
+}
+
+func (ds *sqliteDatastore) getSeedStatus(ctx context.Context) (seedStatus, error) {
 	headRevision, err := ds.HeadRevision(ctx)
 	if err != nil {
-		return false, err
-	}
-	if headRevision == datastore.NoRevision {
-		return false, nil
+		return seedStatus{}, err
 	}
 
-	return true, nil
+	m, err := getMetadata(ctx, ds.db, ds.q)
+	if err != nil {
+		return seedStatus{}, err
+	}
+
+	return seedStatus{
+		headRevision != datastore.NoRevision,
+		m.DatabaseIdent != uuid.Nil,
+	}, nil
 }
 
 func (ds *sqliteDatastore) seedDatabase(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "seedDatabase")
 	defer span.End()
 
-	isSeeded, err := ds.isSeeded(ctx)
+	status, err := ds.getSeedStatus(ctx)
 	if err != nil {
 		return err
 	}
-	if isSeeded {
+	if status.done() {
 		return nil
 	}
 
@@ -45,6 +60,12 @@ func (ds *sqliteDatastore) seedDatabase(ctx context.Context) error {
 
 	if lastInsertID != 0 {
 		log.Ctx(ctx).Info().Int64("headRevision", lastInsertID).Msg("seeded base datastore headRevision")
+	}
+
+	if !status.hasDatabaseIdent {
+		if err := createMetadata(ctx, ds.db, ds.q); err != nil {
+			return fmt.Errorf("seedDatabase: %w", err)
+		}
 	}
 
 	return nil

@@ -67,7 +67,6 @@ func newSqliteDatastore(
 		return nil, common.RedactAndLogSensitiveConnString(ctx, errUnableToInstantiate, err, url)
 	}
 
-	// TODO(aarongodin): parsing any additional options and setup of sqlite-specific items goes here
 	db, err := sql.Open("sqlite3", url)
 	if err != nil {
 		return nil, common.RedactAndLogSensitiveConnString(ctx, errUnableToInstantiate, err, url)
@@ -93,13 +92,13 @@ func newSqliteDatastore(
 
 func newSqliteDatastoreWithInstance(
 	_ context.Context,
-	instance *sql.DB,
+	db *sql.DB,
 	closeHandler CloseHandler,
 	tablePrefix string,
 ) (datastore.Datastore, error) {
 	tables := NewTables(tablePrefix)
 	datastore := &sqliteDatastore{
-		db:           instance,
+		db:           db,
 		tables:       tables,
 		q:            newQueries(tables),
 		ownedStore:   false,
@@ -177,7 +176,6 @@ func (ds *sqliteDatastore) ReadWriteTx(
 	})
 
 	if err != nil {
-		// TODO(aarongodin): this should return a nicer error that can be understood by spicedb
 		return datastore.NoRevision, err
 	}
 
@@ -204,8 +202,21 @@ func (ds *sqliteDatastore) Watch(ctx context.Context, afterRevision datastore.Re
 }
 
 func (ds *sqliteDatastore) ReadyState(ctx context.Context) (datastore.ReadyState, error) {
-	// TODO(aarongodin): check the migrations similarly to how other implementations are and report the readystate
-	return datastore.ReadyState{IsReady: true}, nil
+	seedStatus, err := ds.getSeedStatus(ctx)
+	if err != nil {
+		return datastore.ReadyState{}, err
+	}
+	if !seedStatus.done() {
+		return datastore.ReadyState{
+			Message: "datastore is not properly seeded",
+			IsReady: false,
+		}, nil
+	}
+
+	return datastore.ReadyState{
+		Message: "",
+		IsReady: true,
+	}, nil
 }
 
 func (ds *sqliteDatastore) Features(ctx context.Context) (*datastore.Features, error) {
@@ -217,7 +228,40 @@ func (ds *sqliteDatastore) Features(ctx context.Context) (*datastore.Features, e
 }
 
 func (ds *sqliteDatastore) Statistics(ctx context.Context) (datastore.Stats, error) {
-	return datastore.Stats{}, nil
+	// Other datastores do these steps in a more performant way. Let's assume sqlite is not used for SpiceDB
+	// when in performance-critical situations.
+
+	metadata, err := getMetadata(ctx, ds.db, ds.q)
+	if err != nil {
+		return datastore.Stats{}, fmt.Errorf("sqlite statistics: %w", err)
+	}
+
+	var lazyCount uint64
+	countQuery, _, err := ds.q.selectTupleCount.ToSql()
+	if err != nil {
+		return datastore.Stats{}, fmt.Errorf("sqlite statistics: %w", err)
+	}
+	row := ds.db.QueryRowContext(ctx, countQuery)
+	if err = row.Scan(&lazyCount); err != nil {
+		return datastore.Stats{}, fmt.Errorf("sqlite statistics: %w", err)
+	}
+
+	rev, err := ds.HeadRevision(ctx)
+	if err != nil {
+		return datastore.Stats{}, fmt.Errorf("sqlite statistics: %w", err)
+	}
+
+	reader := ds.SnapshotReader(rev)
+	nsDefs, err := reader.ListAllNamespaces(ctx)
+	if err != nil {
+		return datastore.Stats{}, fmt.Errorf("sqlite statistics: %w", err)
+	}
+
+	return datastore.Stats{
+		UniqueID:                   metadata.DatabaseIdent.String(),
+		EstimatedRelationshipCount: lazyCount,
+		ObjectTypeStatistics:       datastore.ComputeObjectTypeStats(nsDefs),
+	}, nil
 }
 
 func (ds *sqliteDatastore) Close() error {

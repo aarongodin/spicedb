@@ -23,6 +23,7 @@ const (
 	colDefinition       = "definition"
 	colCaveatName       = "caveat_name"
 	colCaveatContext    = "caveat_context"
+	colDatabaseIdent    = "database_ident"
 )
 
 var (
@@ -50,10 +51,13 @@ type queries struct {
 	selectTupleWithID       sq.SelectBuilder
 	selectNamespace         sq.SelectBuilder
 	selectLastTransactionID sq.SelectBuilder
+	selectMetadata          sq.SelectBuilder
+	selectTupleCount        sq.SelectBuilder
 
 	// Insert
 	insertNamespace sq.InsertBuilder
 	insertTuple     sq.InsertBuilder
+	insertMetadata  sq.InsertBuilder
 
 	// Update
 	updateNamespace sq.UpdateBuilder
@@ -68,12 +72,11 @@ func newQueries(tables *Tables) *queries {
 		// Select
 		newTransactionSelector: func(rev datastore.Revision) selector {
 			// This selector will apply a where clause that ensures the rows are restricted to only the given revision
+			transactionID := rev.(revisions.TransactionIDRevision).TransactionID()
 			return func(base sq.SelectBuilder) sq.SelectBuilder {
-				return base.Where(sq.LtOrEq{colCreatedTxn: rev.(revisions.TransactionIDRevision).TransactionID()}).
-					Where(sq.Or{
-						sq.Eq{colDeletedTxn: liveDeletedTxnID},
-						sq.Gt{colDeletedTxn: rev},
-					})
+				return base.
+					Where(sq.LtOrEq{colCreatedTxn: transactionID}).
+					Where(sq.Gt{colDeletedTxn: rev})
 			}
 		},
 		selectTuple: builder.Select(
@@ -99,6 +102,8 @@ func newQueries(tables *Tables) *queries {
 		).From(tables.tableTuple),
 		selectNamespace:         builder.Select(colConfig, colCreatedTxn).From(tables.tableNamespace),
 		selectLastTransactionID: builder.Select("MAX(id)").From(tables.tableTransaction).Limit(1),
+		selectMetadata:          builder.Select(colDatabaseIdent).From(tables.tableMetadata),
+		selectTupleCount:        builder.Select("COUNT(id)").From(tables.tableTuple),
 
 		// Insert
 		insertNamespace: builder.Insert(tables.tableNamespace).Columns(
@@ -115,6 +120,7 @@ func newQueries(tables *Tables) *queries {
 			colCaveatContext,
 			colCreatedTxn,
 		),
+		insertMetadata: builder.Insert(tables.tableMetadata).Columns(colDatabaseIdent),
 
 		// Update
 		updateNamespace: builder.Update(tables.tableNamespace),

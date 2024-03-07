@@ -69,6 +69,15 @@ func createCaveatTable(t *sqlite.Tables) string {
 	)
 }
 
+func createMetadata(t *sqlite.Tables) string {
+	return fmt.Sprintf(`
+		CREATE TABLE %s (
+			database_ident TEXT NOT NULL
+		);`,
+		t.Metadata(),
+	)
+}
+
 func init() {
 	mustRegisterMigration("initial", "", noNonatomicMigration,
 		newStatementBatch(
@@ -77,6 +86,7 @@ func init() {
 			createRelationTuple,
 			createRelationTupleTransaction,
 			createCaveatTable,
+			createMetadata,
 		).execute,
 	)
 }

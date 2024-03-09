@@ -122,8 +122,8 @@ type sqliteDatastore struct {
 
 func (ds *sqliteDatastore) SnapshotReader(rev datastore.Revision) datastore.Reader {
 	return &sqliteReader{
+		ds.db,
 		ds.q,
-		util.NewTxFactory(ds.db),
 		common.QueryExecutor{
 			Executor: newSqliteExecutor(ds.db),
 		},
@@ -160,8 +160,8 @@ func (ds *sqliteDatastore) ReadWriteTx(
 
 		rwt := &sqliteReadWriteTransaction{
 			&sqliteReader{
+				ds.db,
 				ds.q,
-				util.NewTxFactoryWithInstance(tx),
 				executor,
 				func(original sq.SelectBuilder) sq.SelectBuilder {
 					return original.Where(sq.Eq{colDeletedTxn: liveDeletedTxnID})

@@ -21,7 +21,7 @@ func getMetadata(ctx context.Context, db *sql.DB, q *queries) (metadata, error) 
 
 	query, args, err := q.selectMetadata.ToSql()
 	if err != nil {
-		return m, fmt.Errorf("error preparting sqlite metadata query: %w", err)
+		return m, fmt.Errorf("error preparing sqlite metadata query: %w", err)
 	}
 	row := db.QueryRowContext(ctx, query, args...)
 	if err = row.Scan(&databaseIdent); err != nil {

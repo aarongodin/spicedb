@@ -12,6 +12,7 @@ import (
 	core "github.com/authzed/spicedb/pkg/proto/core/v1"
 	"github.com/authzed/spicedb/pkg/spiceerrors"
 	"github.com/authzed/spicedb/pkg/tuple"
+	"github.com/jzelinskie/stringz"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -175,6 +176,37 @@ func (rwt *sqliteReadWriteTransaction) WriteRelationships(ctx context.Context, m
 }
 
 func (rwt *sqliteReadWriteTransaction) DeleteRelationships(ctx context.Context, filter *v1.RelationshipFilter) error {
+	// Add clauses for the ResourceFilter
+	query := rwt.q.updateTuple.Where(sq.Eq{colNamespace: filter.ResourceType, colDeletedTxn: liveDeletedTxnID})
+	if filter.OptionalResourceId != "" {
+		query = query.Where(sq.Eq{colObjectID: filter.OptionalResourceId})
+	}
+	if filter.OptionalRelation != "" {
+		query = query.Where(sq.Eq{colRelation: filter.OptionalRelation})
+	}
+
+	// Add clauses for the SubjectFilter
+	if subjectFilter := filter.OptionalSubjectFilter; subjectFilter != nil {
+		query = query.Where(sq.Eq{colUsersetNamespace: subjectFilter.SubjectType})
+		if subjectFilter.OptionalSubjectId != "" {
+			query = query.Where(sq.Eq{colUsersetObjectID: subjectFilter.OptionalSubjectId})
+		}
+		if relationFilter := subjectFilter.OptionalRelation; relationFilter != nil {
+			query = query.Where(sq.Eq{colUsersetRelation: stringz.DefaultEmpty(relationFilter.Relation, datastore.Ellipsis)})
+		}
+	}
+
+	query = query.Set(colDeletedTxn, rwt.transactionID)
+
+	querySQL, args, err := query.ToSql()
+	if err != nil {
+		return fmt.Errorf(errUnableToDeleteRelationships, err)
+	}
+
+	if _, err := rwt.tx.ExecContext(ctx, querySQL, args...); err != nil {
+		return fmt.Errorf(errUnableToDeleteRelationships, err)
+	}
+
 	return nil
 }
 
@@ -219,6 +251,7 @@ func (rwt *sqliteReadWriteTransaction) WriteNamespaces(ctx context.Context, newC
 }
 
 func (rwt *sqliteReadWriteTransaction) DeleteNamespaces(ctx context.Context, nsNames ...string) error {
+
 	return nil
 }
 

@@ -10,17 +10,16 @@ import (
 
 	"github.com/authzed/spicedb/internal/datastore/common"
 	"github.com/authzed/spicedb/internal/datastore/revisions"
-	"github.com/authzed/spicedb/internal/datastore/sqlite/util"
 	"github.com/authzed/spicedb/pkg/datastore"
 	"github.com/authzed/spicedb/pkg/datastore/options"
 	core "github.com/authzed/spicedb/pkg/proto/core/v1"
 )
 
 type sqliteReader struct {
-	q         *queries
-	txFactory util.TxFactory
-	executor  common.QueryExecutor
-	filterer  func(sq.SelectBuilder) sq.SelectBuilder
+	db       *sql.DB
+	q        *queries
+	executor common.QueryExecutor
+	filterer func(sq.SelectBuilder) sq.SelectBuilder
 }
 
 const (
@@ -71,13 +70,7 @@ func (r *sqliteReader) ReverseQueryRelationships(
 }
 
 func (r *sqliteReader) ReadNamespaceByName(ctx context.Context, nsName string) (*core.NamespaceDefinition, datastore.Revision, error) {
-	tx, txCleanup, err := r.txFactory(ctx)
-	if err != nil {
-		return nil, datastore.NoRevision, fmt.Errorf(errUnableToReadConfig, err)
-	}
-	defer common.LogOnError(ctx, txCleanup)
-
-	loaded, version, err := loadNamespace(ctx, tx, r.filterer(r.q.selectNamespace), nsName)
+	loaded, version, err := loadNamespace(ctx, r.db, r.filterer(r.q.selectNamespace), nsName)
 	switch {
 	case errors.As(err, &datastore.ErrNamespaceNotFound{}):
 		return nil, datastore.NoRevision, err
@@ -88,7 +81,7 @@ func (r *sqliteReader) ReadNamespaceByName(ctx context.Context, nsName string) (
 	}
 }
 
-func loadNamespace(ctx context.Context, tx *sql.Tx, baseQuery sq.SelectBuilder, namespace string) (*core.NamespaceDefinition, datastore.Revision, error) {
+func loadNamespace(ctx context.Context, db *sql.DB, baseQuery sq.SelectBuilder, namespace string) (*core.NamespaceDefinition, datastore.Revision, error) {
 	ctx, span := tracer.Start(ctx, "loadNamespace")
 	defer span.End()
 
@@ -99,7 +92,7 @@ func loadNamespace(ctx context.Context, tx *sql.Tx, baseQuery sq.SelectBuilder, 
 
 	var config []byte
 	var txID uint64
-	err = tx.QueryRowContext(ctx, query, args...).Scan(&config, &txID)
+	err = db.QueryRowContext(ctx, query, args...).Scan(&config, &txID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			err = datastore.NewNamespaceNotFoundErr(namespace)
@@ -132,40 +125,35 @@ func (r *sqliteReader) loadNamespaces(ctx context.Context, filteredQuery sq.Sele
 		err    error
 	)
 
-	if err = r.txFactory.WithTx(ctx, func(tx *sql.Tx) error {
-		query, args, err := filteredQuery.ToSql()
-		if err != nil {
-			return err
-		}
-		rows, err := tx.QueryContext(ctx, query, args...)
-		if err != nil {
-			return err
-		}
-		defer common.LogOnError(ctx, rows.Close)
-
-		for rows.Next() {
-			var config []byte
-			var txID uint64
-			if err := rows.Scan(&config, &txID); err != nil {
-				return err
-			}
-
-			loaded := &core.NamespaceDefinition{}
-			if err := loaded.UnmarshalVT(config); err != nil {
-				return fmt.Errorf(errUnableToReadConfig, err)
-			}
-
-			nsDefs = append(nsDefs, datastore.RevisionedNamespace{
-				Definition:          loaded,
-				LastWrittenRevision: revisions.NewForTransactionID(txID),
-			})
-		}
-		if rows.Err() != nil {
-			return rows.Err()
-		}
-		return nil
-	}); err != nil {
+	query, args, err := filteredQuery.ToSql()
+	if err != nil {
 		return nil, fmt.Errorf(errUnableToListNamespaces, err)
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf(errUnableToListNamespaces, err)
+	}
+	defer common.LogOnError(ctx, rows.Close)
+
+	for rows.Next() {
+		var config []byte
+		var txID uint64
+		if err := rows.Scan(&config, &txID); err != nil {
+			return nil, fmt.Errorf(errUnableToListNamespaces, err)
+		}
+
+		loaded := &core.NamespaceDefinition{}
+		if err := loaded.UnmarshalVT(config); err != nil {
+			return nil, fmt.Errorf(errUnableToListNamespaces, err)
+		}
+
+		nsDefs = append(nsDefs, datastore.RevisionedNamespace{
+			Definition:          loaded,
+			LastWrittenRevision: revisions.NewForTransactionID(txID),
+		})
+	}
+	if rows.Err() != nil {
+		return nil, fmt.Errorf(errUnableToListNamespaces, rows.Err())
 	}
 
 	return nsDefs, nil
@@ -201,43 +189,36 @@ func (r *sqliteReader) listCaveats(ctx context.Context, caveatNames []string) ([
 
 	listSQL, listArgs, err := r.filterer(caveatsWithNames).ToSql()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(errListCaveats, err)
 	}
 
 	caveats := make([]datastore.RevisionedCaveat, 0)
-	err = r.txFactory.WithTx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, listSQL, listArgs...)
-		if err != nil {
-			return err
-		}
-		defer common.LogOnError(ctx, rows.Close)
-
-		for rows.Next() {
-			var defBytes []byte
-			var txID uint64
-
-			err = rows.Scan(&defBytes, &txID)
-			if err != nil {
-				return err
-			}
-			c := core.CaveatDefinition{}
-			err = c.UnmarshalVT(defBytes)
-			if err != nil {
-				return err
-			}
-			caveats = append(caveats, datastore.RevisionedCaveat{
-				Definition:          &c,
-				LastWrittenRevision: revisions.NewForTransactionID(txID),
-			})
-		}
-
-		if rows.Err() != nil {
-			return err
-		}
-
-		return nil
-	})
+	rows, err := r.db.QueryContext(ctx, listSQL, listArgs...)
 	if err != nil {
+		return nil, fmt.Errorf(errListCaveats, err)
+	}
+	defer common.LogOnError(ctx, rows.Close)
+
+	for rows.Next() {
+		var defBytes []byte
+		var txID uint64
+
+		err = rows.Scan(&defBytes, &txID)
+		if err != nil {
+			return nil, fmt.Errorf(errListCaveats, err)
+		}
+		c := core.CaveatDefinition{}
+		err = c.UnmarshalVT(defBytes)
+		if err != nil {
+			return nil, fmt.Errorf(errListCaveats, err)
+		}
+		caveats = append(caveats, datastore.RevisionedCaveat{
+			Definition:          &c,
+			LastWrittenRevision: revisions.NewForTransactionID(txID),
+		})
+	}
+
+	if rows.Err() != nil {
 		return nil, fmt.Errorf(errListCaveats, err)
 	}
 

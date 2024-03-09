@@ -86,6 +86,10 @@ func (Testds) Mysql() error {
 	return datastoreTest("mysql")
 }
 
+func (Testds) Sqlite() error {
+	return datastoreTest("sqlite")
+}
+
 func datastoreTest(datastore string, tags ...string) error {
 	mergedTags := append([]string{"ci", "docker"}, tags...)
 	tagString := strings.Join(mergedTags, ",")

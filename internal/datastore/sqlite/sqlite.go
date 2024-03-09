@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	sq "github.com/Masterminds/squirrel"
 	"go.opentelemetry.io/otel"
 
 	"github.com/authzed/spicedb/internal/datastore/common"
 	"github.com/authzed/spicedb/internal/datastore/revisions"
+	"github.com/authzed/spicedb/internal/datastore/sqlite/migrations"
 	"github.com/authzed/spicedb/internal/datastore/sqlite/util"
 	"github.com/authzed/spicedb/pkg/datastore"
 	"github.com/authzed/spicedb/pkg/datastore/options"
@@ -47,14 +49,14 @@ func NewSqliteDatastore(
 	return ds, nil
 }
 
-// NewSqliteDatastoreWithInstance creates a new datastore using a user-provided DB instance already configured for sqlite.
-func NewSqliteDatastoreWithInstance(
+// NewSqliteDatastoreWithDB creates a new datastore using a user-provided DB instance already configured for sqlite.
+func NewSqliteDatastoreWithDB(
 	ctx context.Context,
 	instance *sql.DB,
 	closeHandler CloseHandler,
 	tablePrefix string,
 ) (datastore.Datastore, error) {
-	return newSqliteDatastoreWithInstance(ctx, instance, closeHandler, tablePrefix)
+	return newSqliteDatastoreWithDB(ctx, instance, closeHandler, tablePrefix)
 }
 
 func newSqliteDatastore(
@@ -72,7 +74,12 @@ func newSqliteDatastore(
 		return nil, common.RedactAndLogSensitiveConnString(ctx, errUnableToInstantiate, err, url)
 	}
 
-	tables := NewTables(config.tablePrefix)
+	driver := migrations.NewSQLiteDriverFromDB(db, config.tablePrefix)
+	// TODO(aarongodin): this 100 batch size is arbitrary. Maybe it doesn't matter much for sqlite
+	if err := migrations.MigrateToVersion(ctx, driver, "head", time.Second, 100); err != nil {
+		return nil, err
+	}
+	tables := migrations.NewTables(config.tablePrefix)
 	datastore := &sqliteDatastore{
 		db:         db,
 		tables:     tables,
@@ -90,13 +97,18 @@ func newSqliteDatastore(
 	return datastore, nil
 }
 
-func newSqliteDatastoreWithInstance(
-	_ context.Context,
+func newSqliteDatastoreWithDB(
+	ctx context.Context,
 	db *sql.DB,
 	closeHandler CloseHandler,
 	tablePrefix string,
 ) (datastore.Datastore, error) {
-	tables := NewTables(tablePrefix)
+	driver := migrations.NewSQLiteDriverFromDB(db, tablePrefix)
+	// TODO(aarongodin): this 100 batch size is arbitrary. Maybe it doesn't matter much for sqlite
+	if err := migrations.MigrateToVersion(ctx, driver, "head", time.Second, 100); err != nil {
+		return nil, err
+	}
+	tables := migrations.NewTables(tablePrefix)
 	datastore := &sqliteDatastore{
 		db:           db,
 		tables:       tables,
@@ -114,7 +126,7 @@ func newSqliteDatastoreWithInstance(
 type sqliteDatastore struct {
 	revisions.CommonDecoder
 	db           *sql.DB
-	tables       *Tables
+	tables       *migrations.Tables
 	q            *queries
 	ownedStore   bool
 	closeHandler CloseHandler
@@ -183,7 +195,7 @@ func (ds *sqliteDatastore) ReadWriteTx(
 }
 
 func (ds *sqliteDatastore) createTransaction(ctx context.Context, tx *sql.Tx) (uint64, error) {
-	query := fmt.Sprintf("INSERT INTO %s DEFAULT VALUES;", ds.tables.tableTransaction)
+	query := fmt.Sprintf("INSERT INTO %s DEFAULT VALUES;", ds.tables.Transaction())
 	result, err := tx.ExecContext(ctx, query)
 	if err != nil {
 		return 0, fmt.Errorf("failed creating transaction: %w", err)
@@ -223,7 +235,7 @@ func (ds *sqliteDatastore) Features(ctx context.Context) (*datastore.Features, e
 	// Explicitly disable the watch feature for now. More research is required to
 	// determine if this is either useful or feasible in the sqlite datastore.
 	return &datastore.Features{
-		Watch: datastore.Feature{Enabled: false},
+		Watch: datastore.Feature{Enabled: false, Reason: "sqlite is a single process datastore"},
 	}, nil
 }
 

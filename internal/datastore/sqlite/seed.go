@@ -47,7 +47,7 @@ func (ds *sqliteDatastore) seedDatabase(ctx context.Context) error {
 		return nil
 	}
 
-	insertFirstRevisionQuery := fmt.Sprintf("INSERT INTO %s (id, timestamp) VALUES (1, datetime(1, 'unixepoch')) ON CONFLICT DO NOTHING;", ds.tables.tableTransaction)
+	insertFirstRevisionQuery := fmt.Sprintf("INSERT INTO %s (id, timestamp) VALUES (1, datetime(1, 'unixepoch')) ON CONFLICT DO NOTHING;", ds.tables.Transaction())
 	result, err := ds.db.ExecContext(ctx, insertFirstRevisionQuery)
 	if err != nil {
 		return fmt.Errorf("seedDatabase: %w", err)

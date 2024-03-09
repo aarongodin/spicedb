@@ -4,6 +4,7 @@ import (
 	sq "github.com/Masterminds/squirrel"
 	"github.com/authzed/spicedb/internal/datastore/common"
 	"github.com/authzed/spicedb/internal/datastore/revisions"
+	"github.com/authzed/spicedb/internal/datastore/sqlite/migrations"
 	"github.com/authzed/spicedb/pkg/datastore"
 	core "github.com/authzed/spicedb/pkg/proto/core/v1"
 )
@@ -71,7 +72,7 @@ type queries struct {
 	tupleEquality func(*core.RelationTuple) sq.Eq
 }
 
-func newQueries(tables *Tables) *queries {
+func newQueries(tables *migrations.Tables) *queries {
 	return &queries{
 		// Select
 		newTransactionSelector: func(rev datastore.Revision) selector {
@@ -92,7 +93,7 @@ func newQueries(tables *Tables) *queries {
 			colUsersetRelation,
 			colCaveatName,
 			colCaveatContext,
-		).From(tables.tableTuple),
+		).From(tables.Tuple()),
 		selectTupleWithID: builder.Select(
 			colID,
 			colNamespace,
@@ -103,19 +104,19 @@ func newQueries(tables *Tables) *queries {
 			colUsersetRelation,
 			colCaveatName,
 			colCaveatContext,
-		).From(tables.tableTuple),
-		selectNamespace:         builder.Select(colConfig, colCreatedTxn).From(tables.tableNamespace),
-		selectTransaction:       builder.Select(colID).From(tables.tableTransaction),
-		selectLastTransactionID: builder.Select("MAX(id)").From(tables.tableTransaction).Limit(1),
-		selectMetadata:          builder.Select(colDatabaseIdent).From(tables.tableMetadata),
-		selectTupleCount:        builder.Select("COUNT(id)").From(tables.tableTuple),
-		selectCaveat:            builder.Select(colDefinition, colCreatedTxn).From(tables.tableCaveat).OrderBy(colName),
+		).From(tables.Tuple()),
+		selectNamespace:         builder.Select(colConfig, colCreatedTxn).From(tables.Namespace()),
+		selectTransaction:       builder.Select(colID).From(tables.Transaction()),
+		selectLastTransactionID: builder.Select("MAX(id)").From(tables.Transaction()).Limit(1),
+		selectMetadata:          builder.Select(colDatabaseIdent).From(tables.Metadata()),
+		selectTupleCount:        builder.Select("COUNT(id)").From(tables.Tuple()),
+		selectCaveat:            builder.Select(colDefinition, colCreatedTxn).From(tables.Caveat()).OrderBy(colName),
 
 		// Insert
-		insertNamespace: builder.Insert(tables.tableNamespace).Columns(
+		insertNamespace: builder.Insert(tables.Namespace()).Columns(
 			colNamespace, colConfig, colCreatedTxn,
 		),
-		insertTuple: builder.Insert(tables.tableTuple).Columns(
+		insertTuple: builder.Insert(tables.Tuple()).Columns(
 			colNamespace,
 			colObjectID,
 			colRelation,
@@ -126,17 +127,17 @@ func newQueries(tables *Tables) *queries {
 			colCaveatContext,
 			colCreatedTxn,
 		),
-		insertMetadata: builder.Insert(tables.tableMetadata).Columns(colDatabaseIdent),
-		insertCaveat: builder.Insert(tables.tableCaveat).Columns(
+		insertMetadata: builder.Insert(tables.Metadata()).Columns(colDatabaseIdent),
+		insertCaveat: builder.Insert(tables.Caveat()).Columns(
 			colName,
 			colDefinition,
 			colCreatedTxn,
 		),
 
 		// Update
-		updateNamespace: builder.Update(tables.tableNamespace),
-		updateTuple:     builder.Update(tables.tableTuple),
-		updateCaveat:    builder.Update(tables.tableCaveat).Where(sq.Eq{colDeletedTxn: liveDeletedTxnID}),
+		updateNamespace: builder.Update(tables.Namespace()),
+		updateTuple:     builder.Update(tables.Tuple()),
+		updateCaveat:    builder.Update(tables.Caveat()).Where(sq.Eq{colDeletedTxn: liveDeletedTxnID}),
 
 		// Conjunctions
 		tupleEquality: func(r *core.RelationTuple) sq.Eq {

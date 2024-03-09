@@ -2,11 +2,9 @@ package migrations
 
 import (
 	"fmt"
-
-	"github.com/authzed/spicedb/internal/datastore/sqlite"
 )
 
-func createMigrationVersion(t *sqlite.Tables) string {
+func createMigrationVersion(t *Tables) string {
 	return fmt.Sprintf(`CREATE TABLE %s (
 		id INTEGER NOT NULL PRIMARY KEY,
 		version TEXT NOT NULL);`,
@@ -14,7 +12,7 @@ func createMigrationVersion(t *sqlite.Tables) string {
 	)
 }
 
-func createNamespaceConfig(t *sqlite.Tables) string {
+func createNamespaceConfig(t *Tables) string {
 	return fmt.Sprintf(`CREATE TABLE %s (
 		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 		namespace TEXT NOT NULL,
@@ -26,7 +24,7 @@ func createNamespaceConfig(t *sqlite.Tables) string {
 	)
 }
 
-func createRelationTuple(t *sqlite.Tables) string {
+func createRelationTuple(t *Tables) string {
 	return fmt.Sprintf(`CREATE TABLE %s (
 		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 		namespace TEXT NOT NULL,
@@ -44,20 +42,20 @@ func createRelationTuple(t *sqlite.Tables) string {
     CREATE INDEX ix_relation_tuple_by_subject ON %s (userset_object_id, userset_namespace, userset_relation, namespace, relation);
     CREATE INDEX ix_relation_tuple_by_subject_relation ON %s (userset_namespace, userset_relation, namespace, relation);
     CREATE INDEX ix_relation_tuple_by_deleted_transaction ON %s (deleted_transaction);`,
-		t.RelationTuple(), t.RelationTuple(), t.RelationTuple(), t.RelationTuple(),
+		t.Tuple(), t.Tuple(), t.Tuple(), t.Tuple(),
 	)
 }
 
-func createRelationTupleTransaction(t *sqlite.Tables) string {
+func createRelationTupleTransaction(t *Tables) string {
 	return fmt.Sprintf(`CREATE TABLE %s (
 		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL);
     CREATE INDEX ix_relation_tuple_transaction_by_timestamp ON %s (timestamp);`,
-		t.RelationTupleTransaction(), t.RelationTupleTransaction(),
+		t.Transaction(), t.Transaction(),
 	)
 }
 
-func createCaveatTable(t *sqlite.Tables) string {
+func createCaveatTable(t *Tables) string {
 	return fmt.Sprintf(`CREATE TABLE %s (
     name TEXT NOT NULL,
     definition BLOB NOT NULL,
@@ -69,7 +67,7 @@ func createCaveatTable(t *sqlite.Tables) string {
 	)
 }
 
-func createMetadata(t *sqlite.Tables) string {
+func createMetadata(t *Tables) string {
 	return fmt.Sprintf(`
 		CREATE TABLE %s (
 			database_ident TEXT NOT NULL

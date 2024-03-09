@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/authzed/spicedb/internal/datastore/sqlite"
 )
 
-type templatedStatement func(tx *sqlite.Tables) string
+type templatedStatement func(tx *Tables) string
 
 type statementBatch struct {
 	statements []templatedStatement

@@ -9,7 +9,6 @@ import (
 
 	sq "github.com/Masterminds/squirrel"
 
-	"github.com/authzed/spicedb/internal/datastore/sqlite"
 	"github.com/authzed/spicedb/pkg/migrate"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -25,7 +24,7 @@ var builder = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 // SQLiteDriver is an implementation of migrate.Driver for SQLite
 type SQLiteDriver struct {
 	db     *sql.DB
-	tables *sqlite.Tables
+	tables *Tables
 }
 
 func NewSQLiteDriver(path string, tablePrefix string) (*SQLiteDriver, error) {
@@ -37,7 +36,7 @@ func NewSQLiteDriver(path string, tablePrefix string) (*SQLiteDriver, error) {
 }
 
 func NewSQLiteDriverFromDB(db *sql.DB, tablePrefix string) *SQLiteDriver {
-	return &SQLiteDriver{db, sqlite.NewTables(tablePrefix)}
+	return &SQLiteDriver{db, NewTables(tablePrefix)}
 }
 
 func (driver *SQLiteDriver) Version(ctx context.Context) (string, error) {

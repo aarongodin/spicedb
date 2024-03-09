@@ -45,7 +45,6 @@ func NewSqliteDatastore(
 	if err != nil {
 		return nil, err
 	}
-	// TODO(aarongodin): check into NewSeparatingContextDatastoreProxy(..)
 	return ds, nil
 }
 
@@ -75,7 +74,6 @@ func newSqliteDatastore(
 	}
 
 	driver := migrations.NewSQLiteDriverFromDB(db, config.tablePrefix)
-	// TODO(aarongodin): this 100 batch size is arbitrary. Maybe it doesn't matter much for sqlite
 	if err := migrations.MigrateToVersion(ctx, driver, "head", time.Second, 100); err != nil {
 		return nil, err
 	}
@@ -104,7 +102,6 @@ func newSqliteDatastoreWithDB(
 	tablePrefix string,
 ) (datastore.Datastore, error) {
 	driver := migrations.NewSQLiteDriverFromDB(db, tablePrefix)
-	// TODO(aarongodin): this 100 batch size is arbitrary. Maybe it doesn't matter much for sqlite
 	if err := migrations.MigrateToVersion(ctx, driver, "head", time.Second, 100); err != nil {
 		return nil, err
 	}
@@ -148,17 +145,11 @@ func (ds *sqliteDatastore) ReadWriteTx(
 	fn datastore.TxUserFunc,
 	opts ...options.RWTOptionsOption,
 ) (datastore.Revision, error) {
-	// TODO(aarongodin): implement usage of config
-	// config := options.NewRWTOptionsWithOptions(opts...)
-	// config features to support:
-	//   - retries
-
 	var (
 		err           error
 		transactionID uint64
 	)
 
-	// TODO(aarongodin): determine if sqlite has support for TxOptions we would like to include in particular, `Isolation`
 	err = util.WithTx(ctx, ds.db, &sql.TxOptions{}, func(tx *sql.Tx) error {
 		var ierr error
 		transactionID, ierr = ds.createTransaction(ctx, tx)
